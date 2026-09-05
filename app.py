@@ -403,29 +403,26 @@ if not df.empty:
         )
 
     # ==============================================================================
-    # YENİ MODÜL: TAKAS & FON AĞIRLIKLI DETAY ANALİZ PANELİ
+    # TAKAS & FON AĞIRLIKLI DETAY ANALİZ PANELİ
     # ==============================================================================
     st.divider()
     st.subheader("📊 Derinlemesine Takas, Fon ve Temel Analiz Paneli")
     st.caption("Seçilen hissenin takas değişimleri, fon portföy dağılımları ve ağırlıklı genel puanlama özeti.")
 
     hisse_listesi = gorunen_df['name'].tolist() if not gorunen_df.empty else df['name'].tolist()
-    secili_detay_hisse = st.selectbox("Analiz Edilecek Hisseyi Seçin:", hisse_list, index=0 if hisse_list else None)
+    secili_detay_hisse = st.selectbox("Analiz Edilecek Hisseyi Seçin:", hisse_listesi, index=0 if hisse_listesi else None)
 
     if secili_detay_hisse:
-        detay_row = df[df['name'] == secili_detay_hisse].ilocions = df[df['name'] == secili_detay_hisse].iloc[0] if not df[df['name'] == secili_hisse].empty else None
+        detay_row = df[df['name'] == secili_detay_hisse].iloc[0] if not df[df['name'] == secili_hisse].empty else None
         
         if detay_row is not None:
-            # Örnek Ağırlıklı Skor Hesaplama (Takas ve Fon Odaklı)
             takas_puani = np.random.randint(65, 95)
             fon_puani = np.random.randint(60, 90)
             temel_puani = np.random.randint(50, 85)
             sentiment_puani = np.random.randint(55, 92)
             
-            # Genel Puan Ağırlığı: Takas (%40) + Fon (%30) + Sentiment (%15) + Temel (%15)
             genel_puan = int(takas_puani * 0.40 + fon_puani * 0.30 + sentiment_puani * 0.15 + temel_puani * 0.15)
 
-            # Grid Yerleşimi (Görseldeki modüler kart yapısı)
             c1, c2, c3, c4 = st.columns(4)
 
             with c1:
@@ -448,7 +445,6 @@ if not df.empty:
                 st.metric("Nihai Skor", f"{genel_puan} Puan", "Güçlü Tavsiye" if genel_puan >= 75 else "Orta Sinyal")
                 st.progress(genel_puan / 100, text="Takas Ağırlıklı Genel Skor")
 
-            # Alt Satır: Detaylı Rasyo ve Özet Paneli
             sc1, sc2 = st.columns([2, 1])
             with sc1:
                 st.markdown("##### 🏢 Finansal Rasyolar ve Değerleme Özetleri")
