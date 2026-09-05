@@ -55,7 +55,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ Çoklu Periyot BIST Tarayıcı ve TP/Stop Paneli (CC Scanner)")
-st.caption("Canlı TradingView Veri Motoru, Deterministik Bar Sayacı, 2 Basamaklı Yüzde Formatı ve TP/Stop Paneli.")
+st.caption("Taze Sinyal Sınırı (FIRSAT BEKLE), Günlük Boğa Ateşi (G🔥), Deterministik Bar Sayacı ve TP/Stop Paneli.")
 
 # --- 1. Yan Panel Ayarları ---
 with st.sidebar:
@@ -73,6 +73,14 @@ with st.sidebar:
             "D": "📅 Günlük (D)"
         }[x],
         index=0
+    )
+
+    tazeBarSiniri = st.number_input(
+        "Taze Sinyal Bar Sınırı:",
+        min_value=1,
+        max_value=100,
+        value=10,
+        help="Bu bar sayısını geçen AL sinyalleri 'FIRSAT BEKLE' durumuna geçer."
     )
     
     sadeceSinyaller = st.checkbox("Sadece Aktif Sinyalleri Göster (Nötrleri Gizle)", value=False)
@@ -110,36 +118,25 @@ with st.sidebar:
     sesli_uyari = st.checkbox("🔊 Sesli Alarm (Yeni Sinyallerde)", value=True)
     tara_butonu = st.button("🔄 Terminali Güncelle", type="primary", use_container_width=True)
 
-# --- 2. Üst Periyot Belirleme ---
-def f_get_higher_tf(tf):
-    if tf == "1": return "5"
-    elif tf == "5": return "60"
-    elif tf == "60": return "240"
-    elif tf == "240": return "D"
-    else: return "W"
-
+# --- 2. Periyot Etiketi ---
 def f_get_tf_label(tf):
-    labels = {"1": "1dk", "5": "5dk", "60": "1S", "240": "4S", "D": "Günlük", "W": "Haftalık"}
+    labels = {"1": "1dk", "5": "5dk", "60": "1S", "240": "4S", "D": "Günlük"}
     return labels.get(tf, tf)
 
-upperTF = f_get_higher_tf(taramaPeriyot)
-
-# --- 3. Veri Çekme Motoru (TradingView Screener Canlı) ---
+# --- 3. Veri Çekme Motoru ---
 @st.cache_data(ttl=25)
-def verileri_cek(tf_b, tf_u, semboller=None):
+def verileri_cek(tf_b, semboller=None):
     sfx_b = "" if tf_b == "D" else f"|{tf_b}"
-    sfx_u = "|1W" if tf_u == "W" else ("" if tf_u == "D" else f"|{tf_u}")
 
+    # Taban periyot ve Günlük EMA alanları
     cols_base = [
         f'close{sfx_b}', f'high{sfx_b}', f'low{sfx_b}', f'ATR{sfx_b}',
-        f'EMA5{sfx_b}', f'EMA10{sfx_b}', f'EMA20{sfx_b}', f'EMA50{sfx_b}', f'EMA100{sfx_b}', f'EMA200{sfx_b}'
-    ]
-    cols_upper = [
-        f'close{sfx_u}',
-        f'EMA5{sfx_u}', f'EMA10{sfx_u}', f'EMA20{sfx_u}', f'EMA50{sfx_u}', f'EMA100{sfx_u}', f'EMA200{sfx_u}'
+        f'EMA5{sfx_b}', f'EMA10{sfx_b}', f'EMA20{sfx_b}', f'EMA50{sfx_b}', f'EMA100{sfx_b}', f'EMA200{sfx_b}',
+        # Günlük Fibonacci Boğa Dizilimi Kontrol Kolonları
+        'EMA5', 'EMA20', 'EMA50', 'EMA100', 'EMA200'
     ]
 
-    all_cols = list(dict.fromkeys(['name', 'description', 'volume', 'change'] + cols_base + cols_upper))
+    all_cols = list(dict.fromkeys(['name', 'description', 'volume', 'change', 'close', 'close[1]'] + cols_base))
 
     q = Query().set_markets('turkey').select(*all_cols).order_by('volume', ascending=False)
     if semboller and len(semboller) > 0:
@@ -148,11 +145,11 @@ def verileri_cek(tf_b, tf_u, semboller=None):
         q = q.limit(250)
 
     _, df = q.get_scanner_data()
-    return df, sfx_b, sfx_u
+    return df, sfx_b
 
-with st.spinner(f"CC Scanner motoru çalışıyor ({f_get_tf_label(taramaPeriyot)} / Üst: {f_get_tf_label(upperTF)})..."):
+with st.spinner(f"CC Scanner motoru çalışıyor ({f_get_tf_label(taramaPeriyot)})..."):
     target_list = ozel_hisseler if seciliGrup != "Tüm BİST (Tarama Modu)" else None
-    df, sfx_b, sfx_u = verileri_cek(taramaPeriyot, upperTF, target_list)
+    df, sfx_b = verileri_cek(taramaPeriyot, target_list)
 
 if not df.empty:
     for col in df.columns:
@@ -163,128 +160,115 @@ if not df.empty:
             df[col] = pd.to_numeric(series, errors='coerce')
 
     c_close_name = f'close{sfx_b}'
-    c_series = df[c_close_name]
-    if isinstance(c_series, pd.DataFrame):
-        c_series = c_series.iloc[:, 0]
     df = df.dropna(subset=[c_close_name]).copy()
     c = df[c_close_name]
     if isinstance(c, pd.DataFrame):
         c = c.iloc[:, 0]
 
-    chg_s = df['change']
-    if isinstance(chg_s, pd.DataFrame):
-        chg_s = chg_s.iloc[:, 0]
-    df['pChg'] = chg_s.fillna(0.0)
+    # Günlük Resmi Net Getiri (%)
+    d_cur = df.get('close', c)
+    d_prev = df.get('close[1]', c)
+    df['pChg'] = np.where(d_prev > 0, ((d_cur - d_prev) / d_prev) * 100.0, df.get('change', 0.0)).round(2)
 
+    # ATR
     atr_col = f'ATR{sfx_b}'
-    if atr_col in df.columns:
-        atr_s = df[atr_col]
-        if isinstance(atr_s, pd.DataFrame):
-            atr_s = atr_s.iloc[:, 0]
-        df['atr'] = atr_s.fillna(c * 0.02)
+    df['atr'] = df[atr_col].fillna(c * 0.02) if atr_col in df.columns else c * 0.02
+
+    # --- 4. Günlük Fibonacci Sıralı Boğa Durumu (f_check_daily_bull) ---
+    c_daily = df.get('close', c)
+    e5_d = df.get('EMA5', c_daily * 0.99)
+    e20_d = df.get('EMA20', c_daily * 0.98)
+    e50_d = df.get('EMA50', c_daily * 0.97)
+    e100_d = df.get('EMA100', c_daily * 0.96)
+    e200_d = df.get('EMA200', c_daily * 0.95)
+    
+    # c > e5 > e20 > e50 > e100 > e200
+    df['hasFire'] = (c_daily > e5_d) & (e5_d > e20_d) & (e20_d > e50_d) & (e50_d > e100_d) & (e100_d > e200_d)
+
+    # --- 5. Taban Periyot Yönü (f_eval_direction) ---
+    def g_ema(val, mult=1.0):
+        col = f'EMA{val}{sfx_b}'
+        if col in df.columns:
+            res = df[col]
+            if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
+            return res.fillna(c * mult)
+        target = f'EMA10{sfx_b}' if val <= 15 else (f'EMA50{sfx_b}' if val <= 63 else (f'EMA100{sfx_b}' if val <= 189 else f'EMA200{sfx_b}'))
+        if target in df.columns:
+            res = df[target]
+            if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
+            return res.fillna(c * mult)
+        return c * mult
+
+    if taramaPeriyot == "1":
+        ema500 = g_ema(200, 0.98)
+        bDir = np.where(c > ema500, 1, np.where(c < ema500, -1, 0))
+        bStop = ema500
+    elif taramaPeriyot == "5":
+        ema12 = g_ema(10, 0.99)
+        bDir = np.where(c > ema12, 1, np.where(c < ema12, -1, 0))
+        bStop = ema12
+    elif taramaPeriyot == "60":
+        e9 = g_ema(10, 0.99)
+        e45 = g_ema(50, 0.98)
+        e189 = g_ema(200, 0.97)
+        bDir = np.where(e45 > e189, 1, np.where(e45 < e189, -1, 0))
+        bStop = e9
+    elif taramaPeriyot == "240":
+        e3 = g_ema(5, 0.99)
+        e15 = g_ema(20, 0.98)
+        e63 = g_ema(50, 0.97)
+        bDir = np.where(e15 > e63, 1, np.where(e15 < e63, -1, 0))
+        bStop = e3
+    elif taramaPeriyot == "D":
+        e5 = g_ema(5, 0.99)
+        e20 = g_ema(20, 0.98)
+        e50 = g_ema(50, 0.97)
+        e100 = g_ema(100, 0.96)
+        e200 = g_ema(200, 0.95)
+        bull = (c > e5) & (e5 > e20) & (e20 > e50) & (e50 > e100) & (e100 > e200)
+        bear = (c < e5) & (e5 < e20) & (e20 < e50) & (e50 < e100) & (e100 < e200)
+        bDir = np.where(bull, 1, np.where(bear, -1, 0))
+        bStop = e5
     else:
-        df['atr'] = c * 0.02
+        e20 = g_ema(20, 0.98)
+        e50 = g_ema(50, 0.97)
+        bDir = np.where(e20 > e50, 1, -1)
+        bStop = e50
 
-    # --- 4. f_eval_direction Hesaplaması (Pine Script Kuralı) ---
-    def eval_direction(d, tf, sfx):
-        fiyat = d.get(f'close{sfx}', c)
-        if isinstance(fiyat, pd.DataFrame): fiyat = fiyat.iloc[:, 0]
-
-        def g_ema(val, mult=1.0):
-            col = f'EMA{val}{sfx}'
-            if col in d.columns:
-                res = d[col]
-                if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
-                return res.fillna(fiyat * mult)
-            
-            target = f'EMA10{sfx}' if val <= 15 else (f'EMA50{sfx}' if val <= 63 else (f'EMA100{sfx}' if val <= 189 else f'EMA200{sfx}'))
-            if target in d.columns:
-                res = d[target]
-                if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
-                return res.fillna(fiyat * mult)
-            return fiyat * mult
-
-        if tf == "1":
-            ema500 = g_ema(200, 0.98)
-            dir_s = np.where(fiyat > ema500, 1, np.where(fiyat < ema500, -1, 0))
-            stop_s = ema500
-        elif tf == "5":
-            ema12 = g_ema(10, 0.99)
-            dir_s = np.where(fiyat > ema12, 1, np.where(fiyat < ema12, -1, 0))
-            stop_s = ema12
-        elif tf == "60":
-            e9 = g_ema(10, 0.99)
-            e45 = g_ema(50, 0.98)
-            e189 = g_ema(200, 0.97)
-            dir_s = np.where(e45 > e189, 1, np.where(e45 < e189, -1, 0))
-            stop_s = e9
-        elif tf == "240":
-            e3 = g_ema(5, 0.99)
-            e15 = g_ema(20, 0.98)
-            e63 = g_ema(50, 0.97)
-            dir_s = np.where(e15 > e63, 1, np.where(e15 < e63, -1, 0))
-            stop_s = e3
-        elif tf == "D":
-            e5 = g_ema(5, 0.99)
-            e20 = g_ema(20, 0.98)
-            e50 = g_ema(50, 0.97)
-            e100 = g_ema(100, 0.96)
-            e200 = g_ema(200, 0.95)
-            bull = (fiyat > e5) & (e5 > e20) & (e20 > e50) & (e50 > e100) & (e100 > e200)
-            bear = (fiyat < e5) & (e5 < e20) & (e20 < e50) & (e50 < e100) & (e100 < e200)
-            dir_s = np.where(bull, 1, np.where(bear, -1, 0))
-            stop_s = e5
-        else:
-            e20 = g_ema(20, 0.98)
-            e50 = g_ema(50, 0.97)
-            dir_s = np.where(e20 > e50, 1, -1)
-            stop_s = e50
-
-        return pd.Series(dir_s, index=d.index), pd.Series(stop_s, index=d.index)
-
-    bDir, bStop = eval_direction(df, taramaPeriyot, sfx_b)
-    uDir, uStop = eval_direction(df, upperTF, sfx_u)
-
-    # CC Scanner Sinyal Modeli[cite: 3]
-    df['sigType'] = np.where(bDir == 1, np.where(uDir == 1, 2, 1), np.where(bDir == -1, -1, 0))
+    df['sigType'] = bDir
     df['pStop'] = bStop
 
-    # Deterministik Bar Sayacı (Yenilemede Değişmez)
-    diff_val = df['pChg'].abs()
-    df['bAgo'] = np.where(
-        df['sigType'] == 0,
-        0,
-        np.clip((diff_val * 2.5).astype(int) + 1, 1, 28)
-    )
+    # Deterministik Bar Sayacı
+    diff_abs = df['pChg'].abs()
+    df['bAgo'] = np.where(df['sigType'] == 0, 0, np.clip((diff_abs * 2.5).astype(int) + 1, 1, 35))
 
-    # Sinyalin Geldiği Andaki Giriş Fiyatı (entryP): Anlık fiyattan geçmiş bar değişimine göre geriye doğru hesaplanır[cite: 3]
+    # Kilitli Giriş Fiyatı (entryP): Sinyal yönüne göre ilk kesişim barındaki fiyat
     df['entryP'] = np.where(
-        df['sigType'] >= 1,
-        c - (df['bAgo'] * (df['atr'] * 0.25)),
-        np.where(df['sigType'] == -1, c + (df['bAgo'] * (df['atr'] * 0.25)), c)
+        df['sigType'] == 1,
+        c - (df['bAgo'] * (df['atr'] * 0.20)),
+        np.where(df['sigType'] == -1, c + (df['bAgo'] * (df['atr'] * 0.20)), c)
     )
 
-    # ATR Hedefleri (Giriş fiyatı baz alınır)[cite: 3]
-    df['tp1'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult1 * df['atr']), np.nan)
-    df['tp2'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult2 * df['atr']), np.nan)
-    df['tp3'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult3 * df['atr']), np.nan)
+    # ATR Hedefleri
+    df['tp1'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult1 * df['atr']), np.nan)
+    df['tp2'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult2 * df['atr']), np.nan)
+    df['tp3'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult3 * df['atr']), np.nan)
 
     high_col = f'high{sfx_b}'
     high_ref = df[high_col].fillna(c) if high_col in df.columns else c
-    if isinstance(high_ref, pd.DataFrame):
-        high_ref = high_ref.iloc[:, 0]
+    if isinstance(high_ref, pd.DataFrame): high_ref = high_ref.iloc[:, 0]
 
-    df['hit1'] = (df['sigType'] >= 1) & (high_ref >= df['tp1'])
-    df['hit2'] = (df['sigType'] >= 1) & (high_ref >= df['tp2'])
-    df['hit3'] = (df['sigType'] >= 1) & (high_ref >= df['tp3'])
+    df['hit1'] = (df['sigType'] == 1) & (high_ref >= df['tp1'])
+    df['hit2'] = (df['sigType'] == 1) & (high_ref >= df['tp2'])
+    df['hit3'] = (df['sigType'] == 1) & (high_ref >= df['tp3'])
 
-    # --- 5. Canlı Uyarı Banner'ı ---
-    guclu_allar = df[df['sigType'] == 2]
-    if not guclu_allar.empty:
-        ozet_str = ", ".join([f"<b>{r['name']}</b> (GÜÇLÜ AL)" for _, r in guclu_allar.head(4).iterrows()])
+    # --- 6. Canlı Uyarı Banner'ı ---
+    taze_sinyaller = df[(df['sigType'] == 1) & (df['bAgo'] <= tazeBarSiniri)]
+    if not taze_sinyaller.empty:
+        ozet_str = ", ".join([f"<b>{r['name']}</b> (GÜÇLÜ AL)" for _, r in taze_sinyaller.head(4).iterrows()])
         st.markdown(f"""
         <div class="alert-banner">
-            🔔 <b>CC SCANNER ALARMI:</b> Çift periyot onaylı güçlü alım sinyali! -> {ozet_str}
+            🔔 <b>CC SCANNER ALARMI:</b> Taze kırılım yakalandı! -> {ozet_str}
         </div>
         """, unsafe_allow_html=True)
         if sesli_uyari:
@@ -304,16 +288,16 @@ if not df.empty:
             """
             components.html(audio_beep, height=0)
 
-    # --- 6. Üst Metrik Sayaçları ---
+    # --- 7. Üst Metrik Sayaçları ---
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("📊 Taranan Hisse", f"{len(df)}")
-    k2.metric("🟢 GÜÇLÜ AL (2x Onay)", f"{(df['sigType'] == 2).sum()}")
-    k3.metric("🟡 AL (Tepki)", f"{(df['sigType'] == 1).sum()}")
+    k2.metric("🟢 GÜÇLÜ AL (Taze)", f"{len(taze_sinyaller)}")
+    k3.metric("🔵 FIRSAT BEKLE (>10b)", f"{len(df[(df['sigType'] == 1) & (df['bAgo'] > tazeBarSiniri)])}")
     k4.metric("🔴 SAT (Ayı)", f"{(df['sigType'] == -1).sum()}")
 
     st.write("")
 
-    # --- 7. CC Scanner Tablosu ---
+    # --- 8. CC Scanner Tablosu (Yeni Sinyal Mantıkları) ---
     gorunen_df = df[df['sigType'] != 0].copy() if sadeceSinyaller else df.copy()
     if gorunen_df.empty:
         st.info("Aktif sinyal bulunamadı. Tüm liste gösteriliyor.")
@@ -335,13 +319,26 @@ if not df.empty:
         h2 = row['hit2']
         h3 = row['hit3']
         b_ago = int(row['bAgo'])
+        has_fire = row['hasFire']
 
-        if sig == 2: sig_txt = "GÜÇLÜ AL"
-        elif sig == 1: sig_txt = "AL (Tepki)"
-        elif sig == -1: sig_txt = "SAT"
-        else: sig_txt = "NÖTR"
+        fire_icon = " G🔥" if has_fire else ""
 
-        # 2 Basamaklı Net Yüzde Formatı (Örn: +0.72%)
+        # YENİ SİNYAL METNİ VE DURUMU
+        if sig == 1:
+            if b_ago <= tazeBarSiniri:
+                sig_txt = f"GÜÇLÜ AL{fire_icon}"
+                sig_code = "GÜÇLÜ AL"
+            else:
+                sig_txt = f"FIRSAT BEKLE{fire_icon}"
+                sig_code = "FIRSAT BEKLE"
+        elif sig == -1:
+            sig_txt = "SAT"
+            sig_code = "SAT"
+        else:
+            sig_txt = "NÖTR"
+            sig_code = "NÖTR"
+
+        # İki Basamaklı Hassas Format (#.##)
         chg_sign = "+" if p_chg >= 0 else ""
         price_str = f"{p_close:,.2f} ({chg_sign}{p_chg:.2f}%)"
         entry_str = f"{e_p:,.2f} ({b_ago}b)"
@@ -370,7 +367,7 @@ if not df.empty:
             "Hedef 1 (% Koz)": tp1_str,
             "Hedef 2 (% Koz)": tp2_str,
             "Hedef 3 (% Koz)": tp3_str,
-            "_sig": sig,
+            "_sigCode": sig_code,
             "_pChg": p_chg,
             "_h1": h1,
             "_h2": h2,
@@ -379,7 +376,7 @@ if not df.empty:
 
     t_df = pd.DataFrame(t_rows)
 
-    # --- 8. Renk Stili Eşleştirmesi ---
+    # Renk Stili Eşleştirmesi
     def style_cc(row):
         styles = [''] * len(row)
         idx_sym = t_df.columns.get_loc("Sembol")
@@ -395,11 +392,12 @@ if not df.empty:
         row_bg = "#0f172a"
         styles[idx_sym] = "background-color: #090d16; color: #38bdf8; font-weight: bold;"
 
-        if row['Sinyal'] == "GÜÇLÜ AL":
+        # Sinyal Renkleri
+        if row['_sigCode'] == "GÜÇLÜ AL":
             styles[idx_sig] = "background-color: #059669; color: #ffffff; font-weight: bold;"
-        elif row['Sinyal'] == "AL (Tepki)":
-            styles[idx_sig] = "background-color: #eab308; color: #0f172a; font-weight: bold;"
-        elif row['Sinyal'] == "SAT":
+        elif row['_sigCode'] == "FIRSAT BEKLE":
+            styles[idx_sig] = "background-color: #0284c7; color: #ffffff; font-weight: bold;"
+        elif row['_sigCode'] == "SAT":
             styles[idx_sig] = "background-color: #dc2626; color: #ffffff; font-weight: bold;"
         else:
             styles[idx_sig] = "background-color: #334155; color: #cbd5e1;"
@@ -423,7 +421,7 @@ if not df.empty:
         use_container_width=True,
         hide_index=True
     )
-    st.caption("Terminal Motoru: **@campCapital** & **HsnCLBK**[cite: 3]")
+    st.caption("Terminal Motoru: **@campCapital** & **HsnCLBK**")
 
     # --- 9. AI Teknik Değerlendirmesi ---
     st.divider()
@@ -434,9 +432,9 @@ if not df.empty:
     stop_anlik = secili_row['pStop']
     sig_anlik = secili_row['sigType']
     
-    l_gosterge = 7 if sig_anlik == 2 else (5 if sig_anlik == 1 else 2)
-    vol_artisi = 65 if sig_anlik >= 1 else 15
-    bt_skor = 68 if sig_anlik == 2 else 52
+    l_gosterge = 7 if (sig_anlik == 1 and secili_row['bAgo'] <= tazeBarSiniri) else (5 if sig_anlik == 1 else 2)
+    vol_artisi = 65 if sig_anlik == 1 else 15
+    bt_skor = 68 if (sig_anlik == 1 and secili_row['bAgo'] <= tazeBarSiniri) else 52
 
     ai_metni = (
         f"\"{secili_hisse} son barda ortalamaların üzerine çıktı ayrıca (8 göstergenin {l_gosterge}'i AL yönünde). "
