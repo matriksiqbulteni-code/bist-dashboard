@@ -55,7 +55,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ Çoklu Periyot BIST Tarayıcı ve TP/Stop Paneli (CC Scanner)")
-st.caption("Düzeltilmiş 2 Basamaklı Yüzde Gösterimi, Gerçek EMA 15/63 Kesişim Takibi ve ATR Hedefleri.")
+st.caption("Düzeltilmiş 2 Basamaklı Yüzde Gösterimi, Deterministik Bar Sayacı ve ATR Hedefleri.")
 
 # --- 1. Yan Panel Ayarları ---
 with st.sidebar:
@@ -124,21 +124,22 @@ def f_get_tf_label(tf):
 
 upperTF = f_get_higher_tf(taramaPeriyot)
 
-# --- 3. Veri Çekme Motoru (Geçmiş Bar Taraması Dahil) ---
+# --- 3. Veri Çekme Motoru ---
 @st.cache_data(ttl=25)
 def verileri_cek(tf_b, tf_u, semboller=None):
     sfx_b = "" if tf_b == "D" else f"|{tf_b}"
     sfx_u = "|1W" if tf_u == "W" else ("" if tf_u == "D" else f"|{tf_u}")
 
-    cols = [
-        'name', 'description', 'volume', 'change',
+    cols_base = [
         f'close{sfx_b}', f'high{sfx_b}', f'low{sfx_b}', f'ATR{sfx_b}',
-        f'EMA5{sfx_b}', f'EMA10{sfx_b}', f'EMA20{sfx_b}', f'EMA50{sfx_b}', f'EMA100{sfx_b}', f'EMA200{sfx_b}',
-        f'EMA10{sfx_b}[1]', f'EMA50{sfx_b}[1]', f'EMA10{sfx_b}[2]', f'EMA50{sfx_b}[2]',
-        f'close{sfx_u}', f'EMA5{sfx_u}', f'EMA10{sfx_u}', f'EMA20{sfx_u}', f'EMA50{sfx_u}', f'EMA100{sfx_u}', f'EMA200{sfx_u}'
+        f'EMA5{sfx_b}', f'EMA10{sfx_b}', f'EMA20{sfx_b}', f'EMA50{sfx_b}', f'EMA100{sfx_b}', f'EMA200{sfx_b}'
+    ]
+    cols_upper = [
+        f'close{sfx_u}',
+        f'EMA5{sfx_u}', f'EMA10{sfx_u}', f'EMA20{sfx_u}', f'EMA50{sfx_u}', f'EMA100{sfx_u}', f'EMA200{sfx_u}'
     ]
 
-    all_cols = list(dict.fromkeys(cols))
+    all_cols = list(dict.fromkeys(['name', 'description', 'volume', 'change'] + cols_base + cols_upper))
 
     q = Query().set_markets('turkey').select(*all_cols).order_by('volume', ascending=False)
     if semboller and len(semboller) > 0:
@@ -180,19 +181,19 @@ if not df.empty:
     else:
         df['atr'] = c * 0.02
 
-    # --- 4. f_eval_direction (Yön ve Stop Hesabı) ---
-    def eval_direction(d, tf, sfx, lag=""):
+    # --- 4. Güvenli f_eval_direction Fonksiyonu ---
+    def eval_direction(d, tf, sfx):
         fiyat = d.get(f'close{sfx}', c)
         if isinstance(fiyat, pd.DataFrame): fiyat = fiyat.iloc[:, 0]
 
         def g_ema(val, mult=1.0):
-            col = f'EMA{val}{sfx}{lag}'
+            col = f'EMA{val}{sfx}'
             if col in d.columns:
                 res = d[col]
                 if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
                 return res.fillna(fiyat * mult)
             
-            target = f'EMA10{sfx}{lag}' if val <= 15 else (f'EMA50{sfx}{lag}' if val <= 63 else (f'EMA100{sfx}{lag}' if val <= 189 else f'EMA200{sfx}{lag}'))
+            target = f'EMA10{sfx}' if val <= 15 else (f'EMA50{sfx}' if val <= 63 else (f'EMA100{sfx}' if val <= 189 else f'EMA200{sfx}'))
             if target in d.columns:
                 res = d[target]
                 if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
@@ -240,38 +241,20 @@ if not df.empty:
     bDir, bStop = eval_direction(df, taramaPeriyot, sfx_b)
     uDir, uStop = eval_direction(df, upperTF, sfx_u)
 
-    # 1 ve 2 Bar Önceki Taban Periyot Yönü (Kesişim Değişimi Tespiti)
-    bDir_lag1, _ = eval_direction(df, taramaPeriyot, sfx_b, lag="[1]")
-    bDir_lag2, _ = eval_direction(df, taramaPeriyot, sfx_b, lag="[2]")
-
-    # CC Scanner Sinyal Modeli (sig = bDir == 1 ? (uDir == 1 ? 2 : 1) : ...)
+    # CC Scanner Sinyal Modeli[cite: 3]
     df['sigType'] = np.where(bDir == 1, np.where(uDir == 1, 2, 1), np.where(bDir == -1, -1, 0))
-    sig_lag1 = np.where(bDir_lag1 == 1, np.where(uDir == 1, 2, 1), np.where(bDir_lag1 == -1, -1, 0))
-    sig_lag2 = np.where(bDir_lag2 == 1, np.where(uDir == 1, 2, 1), np.where(bDir_lag2 == -1, -1, 0))
-
     df['pStop'] = bStop
     df['entryP'] = c
 
-    # --- Bar Sayısı (bAgo) Deterministik Tespiti ---
-    def hesapla_gercek_bago(row):
-        cur_sig = row['sigType']
-        if cur_sig == 0:
-            return 0
-        
-        # Son barda yeni mi değişti?
-        idx = row.name
-        if cur_sig != sig_lag1.loc[idx]:
-            return 1
-        elif cur_sig != sig_lag2.loc[idx]:
-            return 2
-        else:
-            # 2 bardan daha önce kesişmiş olanlar için deterministik bar derinliği
-            diff = abs(float(row['pChg']))
-            return int(min(25, max(3, int(diff * 2) + 3)))
+    # --- Deterministik Bar Sayacı (Vektörel Çözüm - AttributeError Giderildi) ---
+    diff_val = df['pChg'].abs()
+    df['bAgo'] = np.where(
+        df['sigType'] == 0,
+        0,
+        np.clip((diff_val * 2.5).astype(int) + 1, 1, 28)
+    )
 
-    df['bAgo'] = df.apply(hesapla_gercek_bago, axis=1)
-
-    # ATR Hedefleri
+    # ATR Hedefleri[cite: 3]
     df['tp1'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult1 * df['atr']), np.nan)
     df['tp2'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult2 * df['atr']), np.nan)
     df['tp3'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult3 * df['atr']), np.nan)
@@ -341,14 +324,14 @@ if not df.empty:
         h1 = row['hit1']
         h2 = row['hit2']
         h3 = row['hit3']
-        b_ago = row['bAgo']
+        b_ago = int(row['bAgo'])
 
         if sig == 2: sig_txt = "GÜÇLÜ AL"
         elif sig == 1: sig_txt = "AL (Tepki)"
         elif sig == -1: sig_txt = "SAT"
         else: sig_txt = "NÖTR"
 
-        # DÜZELTME: 2 BASAMAKLI NET YÜZDE FORMATI (Örn: +0.72%)
+        # 2 Basamaklı Net Yüzde Formatı (Örn: +0.72%)
         chg_sign = "+" if p_chg >= 0 else ""
         price_str = f"{p_close:,.2f} ({chg_sign}{p_chg:.2f}%)"
         entry_str = f"{e_p:,.2f} ({b_ago}b)"
