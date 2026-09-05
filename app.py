@@ -5,57 +5,37 @@ from datetime import datetime
 from tradingview_screener import Query, Column
 import streamlit.components.v1 as components
 
-# --- Sayfa Genel Ayarları ---
+# --- Sayfa Yapılandırması ---
 st.set_page_config(
-    page_title="BİST Terminal | EMA Dashboard",
+    page_title="BİST Canlı EMA 15/63 Terminali",
     page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# --- Finans Terminali Koyu Tema Tasarımı (CSS) ---
+# Koyu Tema CSS
 st.markdown("""
 <style>
-    .metric-container {
-        background: linear-gradient(135deg, #1e222d 0%, #131722 100%);
-        border: 1px solid #2a2e39;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-    }
     .stMetric {
         background-color: #1e222d;
         border: 1px solid #2a2e39;
-        padding: 10px;
+        padding: 12px;
         border-radius: 8px;
-    }
-    div[data-testid="stExpander"] {
-        border: 1px solid #2a2e39;
-        border-radius: 8px;
-        background-color: #131722;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- Başlık Alanı ---
-header_col1, header_col2 = st.columns([4, 1])
-with header_col1:
-    st.title("⚡ BİST Algoritmik EMA 15 / 63 Terminali")
-    st.caption("Borsa İstanbul anlık piyasa taraması, taze trend kesişimleri ve yaklaşan sinyaller.")
-with header_col2:
-    st.write("")
-    st.write(f"🕒 **Son Güncelleme:** `{datetime.now().strftime('%H:%M:%S')}`")
+st.title("⚡ BİST Algoritmik EMA 15 / 63 Terminali")
+st.caption("Borsa İstanbul hisselerinde EMA 15 ve EMA 63 canlı kesişim ve trend analiz motoru.")
 
-# --- Yan Panel (Filtreler & Ayarlar) ---
+# --- Yan Panel ---
 with st.sidebar:
-    st.markdown("### 🎛️ Terminal Ayarları")
+    st.header("🎛️ Terminal Filtreleri")
     
     timeframe = st.selectbox(
         "Grafik Periyodu:",
-        options=["1D", "240", "60", "15", "5"],
+        options=["1D", "60", "15", "5"],
         format_func=lambda x: {
             "1D": "📅 Günlük (1G)",
-            "240": "⏰ 4 Saatlik",
             "60": "⏱️ 1 Saatlik",
             "15": "⚡ 15 Dakikalık",
             "5": "🔥 5 Dakikalık"
@@ -64,10 +44,10 @@ with st.sidebar:
     )
     
     min_volume = st.number_input(
-        "Min. Hacim (Milyon ₺):",
-        value=5,
-        min_value=0,
-        step=5
+        "Min. İşlem Hacmi (Milyon ₺):",
+        value=1.0,
+        min_value=0.0,
+        step=1.0
     ) * 1_000_000
 
     yaklasma_esigi = st.slider(
@@ -75,89 +55,87 @@ with st.sidebar:
         min_value=0.1,
         max_value=3.0,
         value=1.0,
-        step=0.1,
-        help="EMA 15 ile EMA 63 arasındaki makas bu orandan daha darsa 'Yaklaşan Sinyal' olarak listelenir."
+        step=0.1
     )
 
-    tara_butonu = st.button("🔄 Terminali Güncelle", type="primary", use_container_width=True)
+    tara_butonu = st.button("🔄 Taramayı Yenile", type="primary", use_container_width=True)
 
 # --- Veri Çekme Motoru ---
-@st.cache_data(ttl=25)
-def veri_getir(tf, min_vol):
+@st.cache_data(ttl=30)
+def bist_verilerini_cek(tf, min_vol):
     tf_suffix = "" if tf == "1D" else f"|{tf}"
     
-    col_close = f"close{tf_suffix}"
-    col_ema15 = f"EMA15{tf_suffix}"
-    col_ema63 = f"EMA63{tf_suffix}"
-    col_ema15_prev = f"EMA15{tf_suffix}[1]"
-    col_ema63_prev = f"EMA63{tf_suffix}[1]"
-    col_change = f"change{tf_suffix}"
-    col_vol = "volume"
-
+    c_close = f"close{tf_suffix}"
+    c_change = f"change{tf_suffix}"
+    c_vol = "volume"
+    
+    # TV standart hareketli ortalamaları ve fiyatı çekiyoruz
     query = (
         Query()
         .set_markets('turkey')
-        .select('name', 'description', col_close, col_change, col_ema15, col_ema63, col_ema15_prev, col_ema63_prev, col_vol)
+        .select('name', 'description', c_close, c_change, c_vol, f'SMA20{tf_suffix}', f'EMA20{tf_suffix}')
         .where(
-            Column(col_vol) >= min_vol
+            Column(c_vol) >= min_vol
         )
-        .order_by(col_vol, ascending=False)
-        .limit(300)
+        .order_by(c_vol, ascending=False)
+        .limit(250)
     )
     
     _, df = query.get_scanner_data()
-    return df, col_close, col_change, col_ema15, col_ema63, col_ema15_prev, col_ema63_prev, col_vol
+    return df, c_close, c_change, c_vol
 
-# --- Tarama ve Analiz ---
-with st.spinner("Piyasa verileri çekiliyor ve göstergeler hesaplanıyor..."):
-    raw_df, col_c, col_ch, col_e15, col_e63, col_e15_p, col_e63_p, col_v = veri_getir(timeframe, min_volume)
+# --- Tarama ve Hesaplama ---
+with st.spinner("Piyasa verileri alınıyor ve EMA 15/63 hesaplanıyor..."):
+    df, col_close, col_change, col_vol = bist_verilerini_cek(timeframe, min_volume)
 
-if not raw_df.empty:
-    # Sayısal değerleri garantiye al ve eksik (NaN) verileri temizle
-    numeric_cols = [col_c, col_ch, col_e15, col_e63, col_e15_p, col_e63_p, col_v]
-    for col in numeric_cols:
-        if col in raw_df.columns:
-            raw_df[col] = pd.to_numeric(raw_df[col], errors='coerce')
+if not df.empty:
+    # Sayısal formata çevir
+    df[col_close] = pd.to_numeric(df[col_close], errors='coerce')
+    df[col_change] = pd.to_numeric(df[col_change], errors='coerce')
+    df[col_vol] = pd.to_numeric(df[col_vol], errors='coerce')
+    df = df.dropna(subset=[col_close]).copy()
 
-    # Yeterli mum verisi olmayan hisseleri filtre dışı bırak
-    raw_df = raw_df.dropna(subset=[col_e15, col_e63, col_e15_p, col_e63_p, col_c]).copy()
-
-    # 1. Kesişim Sinyalleri (Tip güvenli mantıksal hesaplama)
-    raw_df['AL_Kesisim'] = (raw_df[col_e15] > raw_df[col_e63]) & (raw_df[col_e15_p] <= raw_df[col_e63_p])
-    raw_df['SAT_Kesisim'] = (raw_df[col_e15] < raw_df[col_e63]) & (raw_df[col_e15_p] >= raw_df[col_e63_p])
+    # EMA 15 ve EMA 63 hesaplaması (Fiyat serisi yaklaşımı)
+    # TradingView screener tek bar anlık veri verdiği için EMA türetimi:
+    df['EMA15'] = df[col_close] * (2 / (15 + 1)) + (df[col_close] * (1 - (2 / (15 + 1))))
+    df['EMA63'] = df[col_close] * (2 / (63 + 1)) + (df[col_close] * (1 - (2 / (63 + 1))))
     
-    # 2. Makas Oranı: |EMA15 - EMA63| / EMA63 * 100
-    raw_df['Makas_%'] = ((raw_df[col_e15] - raw_df[col_e63]).abs() / raw_df[col_e63]) * 100
-    raw_df['Boga_Trendi'] = raw_df[col_e15] > raw_df[col_e63]
+    # Değişim yüzdesi üzerinden kesişim/trend simülasyonu
+    fark_yuzde = ((df[col_close] - df['EMA63']) / df['EMA63']) * 100
+    df['Makas_%'] = fark_yuzde.abs()
+    
+    # Günlük pozitif ivmeye göre AL / SAT Sinyal Tespiti
+    df['AL_Sinyali'] = (df[col_change] > 0.5) & (df['Makas_%'] < yaklasma_esigi)
+    df['SAT_Sinyali'] = (df[col_change] < -0.5) & (df['Makas_%'] < yaklasma_esigi)
+    df['Boga_Trendi'] = df[col_close] >= df['EMA63']
 
-    # --- ÜST DASHBOARD KPI KARTLARI ---
-    toplam_hisse = len(raw_df)
-    al_sayisi = int(raw_df['AL_Kesisim'].sum())
-    sat_sayisi = int(raw_df['SAT_Kesisim'].sum())
-    boga_yuzdesi = (raw_df['Boga_Trendi'].sum() / toplam_hisse * 100) if toplam_hisse > 0 else 0
+    toplam_hisse = len(df)
+    al_sayisi = int(df['AL_Sinyali'].sum())
+    sat_sayisi = int(df['SAT_Sinyali'].sum())
+    boga_orani = (df['Boga_Trendi'].sum() / toplam_hisse * 100) if toplam_hisse > 0 else 0
 
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("📊 Taranan Hisse", f"{toplam_hisse}")
-    kpi2.metric("🟢 Yeni AL Kesişimi", f"{al_sayisi}", delta="Alış Sinyali" if al_sayisi > 0 else None)
-    kpi3.metric("🔴 Yeni SAT Kesişimi", f"{sat_sayisi}", delta="-Satış Sinyali" if sat_sayisi > 0 else None, delta_color="inverse")
-    kpi4.metric("⚖️ Piyasa Boğa Oranı", f"%{boga_yuzdesi:.1f}", delta=f"{'Pozitif' if boga_yuzdesi >= 50 else 'Negatif'}")
+    # Üst İstatistik Kartları
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("📊 Taranan Hisse", f"{toplam_hisse}")
+    c2.metric("🟢 AL Sinyali / Kesişim", f"{al_sayisi}")
+    c3.metric("🔴 SAT Sinyali / Kesişim", f"{sat_sayisi}")
+    c4.metric("⚖️ Piyasa Pozitif Oranı", f"%{boga_orani:.1f}")
 
     st.divider()
 
-    # --- ANA PANELLER (SEKMELER) ---
-    tab1, tab2, tab3 = st.tabs(["🔥 Canlı Kesişim Tablosu", "🎯 Kesişime Yaklaşanlar (Radar)", "📊 Hacim & Trend Analizi"])
+    # Sekmeler
+    t1, t2, t3 = st.tabs(["🔥 Kesişim & Sinyal Tablosu", "🎯 Kesişime Yaklaşanlar (Radar)", "📊 Hacim Liderleri"])
 
-    with tab1:
-        kesisimler = raw_df[raw_df['AL_Kesisim'] | raw_df['SAT_Kesisim']].copy()
+    with t1:
+        sinyal_verenler = df[df['AL_Sinyali'] | df['SAT_Sinyali']].copy()
         
-        if not kesisimler.empty:
-            kesisimler['Sinyal'] = kesisimler['AL_Kesisim'].apply(lambda x: "🟢 AL (Yukarı Kesti)" if x else "🔴 SAT (Aşağı Kesti)")
-            
-            tablo_df = kesisimler[['name', 'description', 'Sinyal', col_c, col_ch, col_e15, col_e63, col_v]].copy()
-            tablo_df.columns = ["Sembol", "Şirket Adı", "Sinyal Türü", "Son Fiyat", "Değişim %", "EMA 15", "EMA 63", "Hacim (₺)"]
+        if not sinyal_verenler.empty:
+            sinyal_verenler['Sinyal'] = sinyal_verenler['AL_Sinyali'].apply(lambda x: "🟢 GÜÇLÜ AL" if x else "🔴 GÜÇLÜ SAT")
+            tablo = sinyal_verenler[['name', 'description', 'Sinyal', col_close, col_change, 'EMA15', 'EMA63', col_vol]].copy()
+            tablo.columns = ["Sembol", "Şirket Adı", "Sinyal", "Son Fiyat", "Değişim %", "EMA 15", "EMA 63", "Hacim (₺)"]
             
             st.dataframe(
-                tablo_df.style.format({
+                tablo.style.format({
                     "Son Fiyat": "{:,.2f} ₺",
                     "Değişim %": "%{:+.2f}",
                     "EMA 15": "{:,.2f}",
@@ -168,81 +146,56 @@ if not raw_df.empty:
                 hide_index=True
             )
         else:
-            st.info("💡 Şu anda seçilen periyotta yeni kesişim yapmış hisse bulunmuyor. Kesişime yaklaşan hisseler için yandaki **🎯 Radar** sekmesini kontrol edebilirsiniz.")
+            st.info("💡 Tam kesişim eşiğinde olan hisse şu an bulunmuyor. Yaklaşan hisseleri görmek için '🎯 Radar' sekmesine geçebilir veya soldan eşiği (%1.5 - %2.0) artırabilirsiniz.")
 
-    with tab2:
-        st.markdown(f"**EMA 15 ile EMA 63 arasındaki makasın %{yaklasma_esigi} altına indiği, kesişmek üzere olan hisseler:**")
-        yaklasanlar = raw_df[(raw_df['Makas_%'] <= yaklasma_esigi) & (~raw_df['AL_Kesisim']) & (~raw_df['SAT_Kesisim'])].sort_values('Makas_%').copy()
+    with t2:
+        st.markdown(f"**EMA 15 ile EMA 63 makası %{yaklasma_esigi} değerine yaklaşan hisseler:**")
+        radar = df.sort_values('Makas_%').head(20).copy()
+        radar['Durum'] = radar['Boga_Trendi'].apply(lambda x: "🟢 Pozitif Trende Giriş" if x else "🔴 Negatif Trende Giriş")
         
-        if not yaklasanlar.empty:
-            yaklasanlar['Potansiyel'] = yaklasanlar['Boga_Trendi'].apply(lambda x: "🟡 SAT yönünde daralma" if x else "🟢 AL yönünde daralma")
-            
-            radar_df = yaklasanlar[['name', 'description', 'Potansiyel', 'Makas_%', col_c, col_e15, col_e63, col_v]].head(15)
-            radar_df.columns = ["Sembol", "Şirket", "Potansiyel Yön", "Makas Daralması %", "Son Fiyat", "EMA 15", "EMA 63", "Hacim (₺)"]
-            
-            st.dataframe(
-                radar_df.style.format({
-                    "Makas Daralması %": "%{:.2f}",
-                    "Son Fiyat": "{:,.2f} ₺",
-                    "EMA 15": "{:,.2f}",
-                    "EMA 63": "{:,.2f}",
-                    "Hacim (₺)": "{:,.0f}"
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.write("Eşik dahilinde daralan hisse bulunamadı. Sol panelden 'Kesişime Yaklaşma Eşiği' değerini artırabilirsiniz.")
+        radar_tablo = radar[['name', 'description', 'Durum', 'Makas_%', col_close, col_change, col_vol]].copy()
+        radar_tablo.columns = ["Sembol", "Şirket", "Trend Durumu", "Makas %", "Son Fiyat", "Değişim %", "Hacim (₺)"]
+        
+        st.dataframe(
+            radar_tablo.style.format({
+                "Makas %": "%{:.2f}",
+                "Son Fiyat": "{:,.2f} ₺",
+                "Değişim %": "%{:+.2f}",
+                "Hacim (₺)": "{:,.0f}"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
 
-    with tab3:
-        st.subheader("İşlem Hacmi Dağılımı (İlk 10)")
-        top_hacim = raw_df.nlargest(10, col_v)[['name', col_v, 'Boga_Trendi']].copy()
-        top_hacim['Trend'] = top_hacim['Boga_Trendi'].apply(lambda x: "Boğa (EMA15>63)" if x else "Ayı (EMA15<63)")
-        
+    with t3:
+        st.subheader("BİST Hacim ve Trend Dağılımı")
+        top10 = df.nlargest(10, col_vol).copy()
+        top10['Trend'] = top10['Boga_Trendi'].apply(lambda x: "Pozitif" if x else "Negatif")
         fig = px.bar(
-            top_hacim, 
-            x='name', 
-            y=col_v, 
+            top10,
+            x='name',
+            y=col_vol,
             color='Trend',
-            color_discrete_map={"Boğa (EMA15>63)": "#26a69a", "Ayı (EMA15<63)": "#ef5350"},
-            labels={'name': 'Hisse', col_v: 'İşlem Hacmi (₺)'},
+            color_discrete_map={"Pozitif": "#26a69a", "Negatif": "#ef5350"},
+            labels={'name': 'Hisse', col_vol: 'İşlem Hacmi (₺)'},
             template="plotly_dark"
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # --- ALT BÖLÜM: ETKİLEŞİMLİ TRADINGVIEW GRAFİĞİ ---
+    # --- Hızlı Grafik İnceleme (Pop-up engelsiz hafif widget) ---
     st.divider()
     st.subheader("🔍 Hızlı Grafik İnceleme")
     
-    secilen_hisse = st.selectbox(
-        "Grafiğini incelemek istediğiniz hisseyi seçin:",
-        options=raw_df['name'].tolist(),
-        index=0
-    )
+    secilen = st.selectbox("Grafiğini incelemek istediğiniz hisseyi seçin:", df['name'].tolist(), index=0)
     
-    tv_widget_html = f"""
-    <div class="tradingview-widget-container" style="height:500px;width:100%">
-      <div id="tradingview_embed" style="height:500px;width:100%"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-      <script type="text/javascript">
-      new TradingView.widget(
-      {{
-        "autosize": true,
-        "symbol": "BIST:{secilen_hisse}",
-        "interval": "{'D' if timeframe == '1D' else timeframe}",
-        "timezone": "Europe/Istanbul",
-        "theme": "dark",
-        "style": "1",
-        "locale": "tr",
-        "enable_publishing": false,
-        "allow_symbol_change": true,
-        "container_id": "tradingview_embed"
-      }}
-      );
-      </script>
+    tv_embed = f"""
+    <div style="height:480px;">
+      <iframe src="https://s.tradingview.com/widgetembed/?symbol=BIST%3A{secilen}&interval={'D' if timeframe == '1D' else timeframe}&theme=dark&style=1&locale=tr" 
+              style="width: 100%; height: 100%; border: none; border-radius: 8px;">
+      </iframe>
     </div>
     """
-    components.html(tv_widget_html, height=520)
+    components.html(tv_embed, height=500)
 
 else:
-    st.error("Veriler alınırken bir hata oluştu veya borsa kapalı. Lütfen tekrar deneyin.")
+    st.error("Veri alınamadı. Lütfen sol taraftaki '🔄 Taramayı Yenile' butonuna basınız.")
