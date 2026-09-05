@@ -12,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- CC Scanner Kobalt Mavisi & Neon Terminal Teması (CSS) ---
+# --- CC CampCapital| Kobalt Mavisi & Neon Terminal Teması (CSS) ---
 st.markdown("""
 <style>
     .main { background-color: #090d16; }
