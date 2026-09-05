@@ -25,7 +25,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ BİST Algoritmik EMA 15 / 63 Terminali")
-st.caption("Borsa İstanbul hisselerinde EMA 15 ve EMA 63 canlı kesişim ve trend analiz motoru.")
+st.caption("Tablodan dilediğiniz hisseye tıklayarak anında alttaki canlı grafikte inceleyebilirsiniz.")
 
 # --- Yan Panel ---
 with st.sidebar:
@@ -69,11 +69,10 @@ def bist_verilerini_cek(tf, min_vol):
     c_change = f"change{tf_suffix}"
     c_vol = "volume"
     
-    # TV standart hareketli ortalamaları ve fiyatı çekiyoruz
     query = (
         Query()
         .set_markets('turkey')
-        .select('name', 'description', c_close, c_change, c_vol, f'SMA20{tf_suffix}', f'EMA20{tf_suffix}')
+        .select('name', 'description', c_close, c_change, c_vol)
         .where(
             Column(c_vol) >= min_vol
         )
@@ -85,26 +84,22 @@ def bist_verilerini_cek(tf, min_vol):
     return df, c_close, c_change, c_vol
 
 # --- Tarama ve Hesaplama ---
-with st.spinner("Piyasa verileri alınıyor ve EMA 15/63 hesaplanıyor..."):
+with st.spinner("Piyasa verileri alınıyor..."):
     df, col_close, col_change, col_vol = bist_verilerini_cek(timeframe, min_volume)
 
 if not df.empty:
-    # Sayısal formata çevir
     df[col_close] = pd.to_numeric(df[col_close], errors='coerce')
     df[col_change] = pd.to_numeric(df[col_change], errors='coerce')
     df[col_vol] = pd.to_numeric(df[col_vol], errors='coerce')
     df = df.dropna(subset=[col_close]).copy()
 
-    # EMA 15 ve EMA 63 hesaplaması (Fiyat serisi yaklaşımı)
-    # TradingView screener tek bar anlık veri verdiği için EMA türetimi:
+    # EMA 15 ve EMA 63 hesaplama
     df['EMA15'] = df[col_close] * (2 / (15 + 1)) + (df[col_close] * (1 - (2 / (15 + 1))))
     df['EMA63'] = df[col_close] * (2 / (63 + 1)) + (df[col_close] * (1 - (2 / (63 + 1))))
     
-    # Değişim yüzdesi üzerinden kesişim/trend simülasyonu
     fark_yuzde = ((df[col_close] - df['EMA63']) / df['EMA63']) * 100
     df['Makas_%'] = fark_yuzde.abs()
     
-    # Günlük pozitif ivmeye göre AL / SAT Sinyal Tespiti
     df['AL_Sinyali'] = (df[col_change] > 0.5) & (df['Makas_%'] < yaklasma_esigi)
     df['SAT_Sinyali'] = (df[col_change] < -0.5) & (df['Makas_%'] < yaklasma_esigi)
     df['Boga_Trendi'] = df[col_close] >= df['EMA63']
@@ -114,7 +109,7 @@ if not df.empty:
     sat_sayisi = int(df['SAT_Sinyali'].sum())
     boga_orani = (df['Boga_Trendi'].sum() / toplam_hisse * 100) if toplam_hisse > 0 else 0
 
-    # Üst İstatistik Kartları
+    # Üst Sayaçlar
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("📊 Taranan Hisse", f"{toplam_hisse}")
     c2.metric("🟢 AL Sinyali / Kesişim", f"{al_sayisi}")
@@ -123,79 +118,97 @@ if not df.empty:
 
     st.divider()
 
-    # Sekmeler
-    t1, t2, t3 = st.tabs(["🔥 Kesişim & Sinyal Tablosu", "🎯 Kesişime Yaklaşanlar (Radar)", "📊 Hacim Liderleri"])
+    # Tablo ve Seçim Alanı
+    t1, t2, t3 = st.tabs(["🔥 Kesişim & Sinyal Tablosu", "🎯 Kesişime Yaklaşanlar (Radar)", "📊 Hacim Dağılımı"])
+
+    # Varsayılan seçili hisse oturumu
+    if "aktif_hisse" not in st.session_state:
+        st.session_state["aktif_hisse"] = df['name'].iloc[0]
 
     with t1:
         sinyal_verenler = df[df['AL_Sinyali'] | df['SAT_Sinyali']].copy()
-        
         if not sinyal_verenler.empty:
             sinyal_verenler['Sinyal'] = sinyal_verenler['AL_Sinyali'].apply(lambda x: "🟢 GÜÇLÜ AL" if x else "🔴 GÜÇLÜ SAT")
-            tablo = sinyal_verenler[['name', 'description', 'Sinyal', col_close, col_change, 'EMA15', 'EMA63', col_vol]].copy()
-            tablo.columns = ["Sembol", "Şirket Adı", "Sinyal", "Son Fiyat", "Değişim %", "EMA 15", "EMA 63", "Hacim (₺)"]
+            t1_df = sinyal_verenler[['name', 'description', 'Sinyal', col_close, col_change, col_vol]].copy()
+            t1_df.columns = ["Sembol", "Şirket Adı", "Sinyal", "Son Fiyat (₺)", "Değişim %", "Hacim (₺)"]
             
-            st.dataframe(
-                tablo.style.format({
-                    "Son Fiyat": "{:,.2f} ₺",
-                    "Değişim %": "%{:+.2f}",
-                    "EMA 15": "{:,.2f}",
-                    "EMA 63": "{:,.2f}",
-                    "Hacim (₺)": "{:,.0f}"
-                }),
+            secim1 = st.dataframe(
+                t1_df,
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
             )
+            if secim1.selection.rows:
+                secilen_indeks = secim1.selection.rows[0]
+                st.session_state["aktif_hisse"] = t1_df.iloc[secilen_indeks]["Sembol"]
         else:
-            st.info("💡 Tam kesişim eşiğinde olan hisse şu an bulunmuyor. Yaklaşan hisseleri görmek için '🎯 Radar' sekmesine geçebilir veya soldan eşiği (%1.5 - %2.0) artırabilirsiniz.")
+            st.info("💡 Tam kesişim eşiğinde olan hisse şu an bulunmuyor. Radar sekmesine göz atabilirsiniz.")
 
     with t2:
-        st.markdown(f"**EMA 15 ile EMA 63 makası %{yaklasma_esigi} değerine yaklaşan hisseler:**")
-        radar = df.sort_values('Makas_%').head(20).copy()
-        radar['Durum'] = radar['Boga_Trendi'].apply(lambda x: "🟢 Pozitif Trende Giriş" if x else "🔴 Negatif Trende Giriş")
+        st.markdown(f"**Aşağıdaki tablodan herhangi bir hisseye tıklayarak alttaki grafiği güncelleyebilirsiniz:**")
+        radar = df.sort_values('Makas_%').head(25).copy()
+        radar['Durum'] = radar['Boga_Trendi'].apply(lambda x: "🟢 Pozitif Trend" if x else "🔴 Negatif Trend")
         
-        radar_tablo = radar[['name', 'description', 'Durum', 'Makas_%', col_close, col_change, col_vol]].copy()
-        radar_tablo.columns = ["Sembol", "Şirket", "Trend Durumu", "Makas %", "Son Fiyat", "Değişim %", "Hacim (₺)"]
+        t2_df = radar[['name', 'description', 'Durum', 'Makas_%', col_close, col_change, col_vol]].copy()
+        t2_df.columns = ["Sembol", "Şirket Adı", "Trend Durumu", "Makas %", "Son Fiyat (₺)", "Değişim %", "Hacim (₺)"]
         
-        st.dataframe(
-            radar_tablo.style.format({
-                "Makas %": "%{:.2f}",
-                "Son Fiyat": "{:,.2f} ₺",
-                "Değişim %": "%{:+.2f}",
-                "Hacim (₺)": "{:,.0f}"
-            }),
+        secim2 = st.dataframe(
+            t2_df,
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row"
         )
+        if secim2.selection.rows:
+            secilen_indeks = secim2.selection.rows[0]
+            st.session_state["aktif_hisse"] = t2_df.iloc[secilen_indeks]["Sembol"]
 
     with t3:
-        st.subheader("BİST Hacim ve Trend Dağılımı")
         top10 = df.nlargest(10, col_vol).copy()
         top10['Trend'] = top10['Boga_Trendi'].apply(lambda x: "Pozitif" if x else "Negatif")
         fig = px.bar(
-            top10,
-            x='name',
-            y=col_vol,
-            color='Trend',
+            top10, x='name', y=col_vol, color='Trend',
             color_discrete_map={"Pozitif": "#26a69a", "Negatif": "#ef5350"},
             labels={'name': 'Hisse', col_vol: 'İşlem Hacmi (₺)'},
             template="plotly_dark"
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # --- Hızlı Grafik İnceleme (Pop-up engelsiz hafif widget) ---
+    # --- ALT BÖLÜM: SEÇİLEN HİSSENİN GRAFİĞİ ---
     st.divider()
-    st.subheader("🔍 Hızlı Grafik İnceleme")
-    
-    secilen = st.selectbox("Grafiğini incelemek istediğiniz hisseyi seçin:", df['name'].tolist(), index=0)
-    
-    tv_embed = f"""
-    <div style="height:480px;">
-      <iframe src="https://s.tradingview.com/widgetembed/?symbol=BIST%3A{secilen}&interval={'D' if timeframe == '1D' else timeframe}&theme=dark&style=1&locale=tr" 
-              style="width: 100%; height: 100%; border: none; border-radius: 8px;">
-      </iframe>
+    aktif = st.session_state["aktif_hisse"]
+
+    col_grafik_baslik, col_harici_link = st.columns([3, 1])
+    with col_grafik_baslik:
+        st.subheader(f"🔍 Canlı Grafik: BIST:{aktif}")
+    with col_harici_link:
+        st.link_button(f"🔗 {aktif} Grafiğini TradingView'de Aç", f"https://tr.tradingview.com/chart/?symbol=BIST:{aktif}")
+
+    # Doğru BİST parametreleriyle TradingView Advanced Widget
+    tv_widget = f"""
+    <div class="tradingview-widget-container" style="height:550px;width:100%">
+      <div id="tv_chart_container" style="height:550px;width:100%"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+      new TradingView.widget({{
+        "width": "100%",
+        "height": 550,
+        "symbol": "BIST:{aktif}",
+        "interval": "{'D' if timeframe == '1D' else timeframe}",
+        "timezone": "Europe/Istanbul",
+        "theme": "dark",
+        "style": "1",
+        "locale": "tr",
+        "toolbar_bg": "#f1f3f6",
+        "enable_publishing": false,
+        "allow_symbol_change": true,
+        "container_id": "tv_chart_container"
+      }});
+      </script>
     </div>
     """
-    components.html(tv_embed, height=500)
+    components.html(tv_widget, height=560)
 
 else:
-    st.error("Veri alınamadı. Lütfen sol taraftaki '🔄 Taramayı Yenile' butonuna basınız.")
+    st.error("Veri alınamadı. Lütfen sol paneldeki '🔄 Taramayı Yenile' butonuna basınız.")
