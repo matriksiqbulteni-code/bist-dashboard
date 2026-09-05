@@ -32,15 +32,35 @@ st.markdown("""
         font-size: 1.6rem !important;
         font-weight: 700 !important;
     }
-    .ai-card {
-        background: #0f172a;
-        border-left: 4px solid #38bdf8;
-        border-radius: 6px;
-        padding: 15px 18px;
-        margin-top: 15px;
-        color: #e2e8f0;
-        font-size: 1.05rem;
-        line-height: 1.6;
+    .badge-green {
+        background-color: rgba(5, 150, 105, 0.2);
+        color: #34d399;
+        border: 1px solid #059669;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.85rem;
+        display: inline-block;
+    }
+    .badge-red {
+        background-color: rgba(220, 38, 38, 0.2);
+        color: #f87171;
+        border: 1px solid #dc2626;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.85rem;
+        display: inline-block;
+    }
+    .badge-yellow {
+        background-color: rgba(202, 138, 4, 0.2);
+        color: #facc15;
+        border: 1px solid #ca8a04;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.85rem;
+        display: inline-block;
     }
     .alert-banner {
         background-color: rgba(5, 150, 105, 0.2);
@@ -396,7 +416,7 @@ if not df.empty:
         )
 
     # ==============================================================================
-    # TAKAS & TEFAS FON AĞIRLIKLI DETAY ANALİZ PANELİ (Gerçekçi & Dinamik)
+    # TAKAS & TEFAS FON AĞIRLIKLI DETAY ANALİZ PANELİ (Duyarlı Renk Motoru)
     # ==============================================================================
     st.divider()
     st.subheader("📊 Derinlemesine Takas, TEFAS Fon ve Temel Analiz Paneli")
@@ -413,7 +433,6 @@ if not df.empty:
             p_chg_val = detay_row['pChg']
             sig_type = detay_row['sigType'] # 1, -1, 0
             
-            # Gerçek piyasa yönüne göre dinamik takas ve fon skoru türetme
             market_effect = p_chg_val * 3.0
             signal_bonus = 20 if sig_type == 1 else (-25 if sig_type == -1 else -5)
             
@@ -429,45 +448,57 @@ if not df.empty:
             with c1:
                 st.markdown("##### 📈 Takas Değişim Analizi")
                 if takas_puani >= 65:
-                    takas_durum = "Güçlü Toplama"
+                    takas_durum = '<span class="badge-green">↑ Güçlü Toplama</span>'
                 elif takas_puani >= 40:
-                    takas_durum = "Yatay / Nötr"
+                    takas_durum = '<span class="badge-yellow">→ Yatay / Nötr</span>'
                 else:
-                    takas_durum = "Mal Çıkışı / Dağıtım"
-                st.metric("Haftalık / Aylık Takas", f"%{p_chg_val * 0.4:+.2f}", takas_durum)
+                    takas_durum = '<span class="badge-red">↓ Mal Çıkışı / Dağıtım</span>'
+                
+                st.metric("Haftalık / Aylık Takas", f"%{p_chg_val * 0.4:+.2f}")
+                st.markdown(takas_durum, unsafe_allow_html=True)
+                st.write("")
                 st.progress(max(0.0, min(1.0, takas_puani / 100)), text=f"Takas Skor Puanı: {takas_puani}/100")
 
             with c2:
                 st.markdown("##### 🏛️ TEFAS Fon İlgi Skoru")
                 if fon_puani >= 60:
-                    fon_durum = "Portföy Payı Artıyor"
+                    fon_durum = '<span class="badge-green">↑ Portföy Payı Artıyor</span>'
                 elif fon_puani >= 40:
-                    fon_durum = "Paylar Dengeli"
+                    fon_durum = '<span class="badge-yellow">→ Paylar Dengeli</span>'
                 else:
-                    fon_durum = "Fonlar Pay Azaltıyor"
-                st.metric("TEFAS Fon Değişimi", f"%{p_chg_val * 0.3:+.2f}", fon_durum)
+                    fon_durum = '<span class="badge-red">↓ Fonlar Pay Azaltıyor</span>'
+
+                st.metric("TEFAS Fon Değişimi", f"%{p_chg_val * 0.3:+.2f}")
+                st.markdown(fon_durum, unsafe_allow_html=True)
+                st.write("")
                 st.progress(max(0.0, min(1.0, fon_puani / 100)), text=f"Fon İlgi Skoru: {fon_puani}/100")
 
             with c3:
                 st.markdown("##### 🧠 Sentiment Puanı")
                 if sentiment_puani >= 60:
-                    sent_durum = "Pozitif Eğilim"
+                    sent_durum = '<span class="badge-green">↑ Pozitif Eğilim</span>'
                 elif sentiment_puani >= 40:
-                    sent_durum = "Kararsız / Bekle"
+                    sent_durum = '<span class="badge-yellow">→ Kararsız / Bekle</span>'
                 else:
-                    sent_durum = "Negatif Baskı"
-                st.metric("Piyasa Algısı", f"{sentiment_puani} / 100", sent_durum)
+                    sent_durum = '<span class="badge-red">↓ Negatif Baskı</span>'
+
+                st.metric("Piyasa Algısı", f"{sentiment_puani} / 100")
+                st.markdown(sent_durum, unsafe_allow_html=True)
+                st.write("")
                 st.progress(max(0.0, min(1.0, sentiment_puani / 100)), text="Duygu Durum Endeksi")
 
             with c4:
                 st.markdown("##### ⭐ Genel Ağırlıklı Puan")
                 if genel_puan >= 70:
-                    skor_durum = "Güçlü Tavsiye"
+                    skor_durum = '<span class="badge-green">⭐ Güçlü Tavsiye</span>'
                 elif genel_puan >= 45:
-                    skor_durum = "Nötr / İzle"
+                    skor_durum = '<span class="badge-yellow">⚡ Nötr / İzle</span>'
                 else:
-                    skor_durum = "Zayıf Görünüm"
-                st.metric("Nihai Skor", f"{genel_puan} Puan", skor_durum)
+                    skor_durum = '<span class="badge-red">⚠️ Zayıf Görünüm</span>'
+
+                st.metric("Nihai Skor", f"{genel_puan} Puan")
+                st.markdown(skor_durum, unsafe_allow_html=True)
+                st.write("")
                 st.progress(max(0.0, min(1.0, genel_puan / 100)), text="Takas Ağırlıklı Genel Skor")
 
             sc1, sc2 = st.columns([1.5, 1.5])
