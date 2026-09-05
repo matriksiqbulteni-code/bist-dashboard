@@ -1,0 +1,4 @@
+streamlit
+tradingview-screener
+pandas
+plotly
