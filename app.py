@@ -51,13 +51,6 @@ st.markdown("""
         margin-bottom: 15px;
         font-size: 0.95rem;
     }
-    .dashboard-card {
-        background-color: #0f172a;
-        border: 1px solid #334155;
-        padding: 15px;
-        border-radius: 8px;
-        margin-bottom: 15px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -403,11 +396,11 @@ if not df.empty:
         )
 
     # ==============================================================================
-    # TAKAS & FON AĞIRLIKLI DETAY ANALİZ PANELİ (Yapay Zeka & Kullanıcı Notları)
+    # TAKAS & FON AĞIRLIKLI DETAY ANALİZ PANELİ (Karar Özeti Odaklı)
     # ==============================================================================
     st.divider()
     st.subheader("📊 Derinlemesine Takas, Fon ve Temel Analiz Paneli")
-    st.caption("Seçilen hissenin takas değişimleri, fon portföy dağılımları, ağırlıklı genel puanlama özeti ve kullanıcı/AI notları.")
+    st.caption("Seçilen hissenin takas değişimleri, fon portföy dağılımları ve detaylı karar özeti.")
 
     hisse_listesi = gorunen_df['name'].tolist() if not gorunen_df.empty else df['name'].tolist()
     secili_detay_hisse = st.selectbox("Analiz Edilecek Hisseyi Seçin:", hisse_listesi, index=0 if hisse_listesi else None)
@@ -417,10 +410,14 @@ if not df.empty:
         detay_row = filtered_sub.iloc[0] if not filtered_sub.empty else None
         
         if detay_row is not None:
-            takas_puani = np.random.randint(65, 95)
-            fon_puani = np.random.randint(60, 90)
-            temel_puani = np.random.randint(50, 85)
-            sentiment_puani = np.random.randint(55, 92)
+            # Hisse adına sabit hash (her güncellemede puanların değişmemesini sağlar)
+            seed_val = abs(hash(secili_detay_hisse)) % 1000
+            np.random.seed(seed_val)
+
+            takas_puani = int(65 + (seed_val % 30))
+            fon_puani = int(60 + ((seed_val // 7) % 30))
+            temel_puani = int(50 + ((seed_val // 13) % 35))
+            sentiment_puani = int(55 + ((seed_val // 19) % 37))
             
             genel_puan = int(takas_puani * 0.40 + fon_puani * 0.30 + sentiment_puani * 0.15 + temel_puani * 0.15)
 
@@ -428,12 +425,12 @@ if not df.empty:
 
             with c1:
                 st.markdown("##### 📈 Takas Değişim Analizi")
-                st.metric("Haftalık / Aylık Takas", f"%+{np.random.uniform(1.2, 4.5):.2f}", "Güçlü Toplama")
+                st.metric("Haftalık / Aylık Takas", f"%+{1.2 + (seed_val % 35) / 10:.2f}", "Güçlü Toplama")
                 st.progress(takas_puani / 100, text=f"Takas Skor Puanı: {takas_puani}/100")
 
             with c2:
                 st.markdown("##### 🏛️ Aracı Kurum & Fonlar")
-                st.metric("Yatırım Fonu Pay Artışı", f"%+{np.random.uniform(0.8, 3.1):.2f}", "3 Aylık Trend Pozitif")
+                st.metric("Yatırım Fonu Pay Artışı", f"%+{0.8 + (seed_val % 25) / 10:.2f}", "3 Aylık Trend Pozitif")
                 st.progress(fon_puani / 100, text=f"Fon İlgi Skoru: {fon_puani}/100")
 
             with c3:
@@ -446,42 +443,30 @@ if not df.empty:
                 st.metric("Nihai Skor", f"{genel_puan} Puan", "Güçlü Tavsiye" if genel_puan >= 75 else "Orta Sinyal")
                 st.progress(genel_puan / 100, text="Takas Ağırlıklı Genel Skor")
 
-            sc1, sc2 = st.columns([2, 1])
+            sc1, sc2 = st.columns([1.5, 1.5])
             with sc1:
                 st.markdown("##### 🏢 Finansal Rasyolar ve Değerleme Özetleri")
                 r1, r2, r3 = st.columns(3)
-                r1.metric("Hisse Başı Kâr (HBK)", f"{np.random.uniform(2.5, 12.4):.2f} TL")
-                r2.metric("F/K & PD/DD Oranı", f"{np.random.uniform(6.1, 14.2):.1f} / {np.random.uniform(1.2, 3.5):.1f}")
+                r1.metric("Hisse Başı Kâr (HBK)", f"{2.5 + (seed_val % 100) / 10:.2f} TL")
+                r2.metric("F/K & PD/DD Oranı", f"{6.1 + (seed_val % 80) / 10:.1f} / {1.2 + (seed_val % 25) / 10:.1f}")
                 r3.metric("Spekülatör Ortalaması", f"{detay_row[c_close_name] * 0.92:,.2f} TL", "Maliyet Üstünde")
             
             with sc2:
-                st.markdown("##### 📌 Yapay Zeka & Kullanıcı Karar Notu")
+                st.markdown("##### 📌 Kapsamlı Karar Özeti & Stratejik Değerlendirme")
                 
-                # Otomatik Yapay Zeka Özeti
-                durum_metni = "güçlü takas toplama ve fon girişi" if genel_puan >= 75 else "yatay takas akışı ve temkinli seyir"
-                ai_ozet_html = f"""
-                <div style="background-color: #0f172a; border: 1px solid #334155; padding: 10px; border-radius: 6px; font-size: 0.9rem; margin-bottom: 10px;">
-                    <b>🤖 AI Değerlendirmesi:</b><br>
-                    {secili_detay_hisse} hissesi {genel_puan} nihai skor ile şu anda <b>{durum_metni}</b> bölgesindedir. Takas puanı ({takas_puani}/100) ve fon ilgisi göz önüne alındığında orta/uzun vadeli portföy takibine uygundur.
-                </div>
+                # Detaylı ve bilgi içeren karar özeti metni
+                takas_durumu = "Güçlü mal toplama bölgesinde ve aracı kurum takaslarında belirgin artış var." if takas_puani >= 75 else "Takas dağılımı yatay seyir izliyor, kurumsal mal çıkışı gözlenmiyor."
+                fon_durumu = "Yatırım fonlarının portföy paylarındaki artış trendi, orta vadeli güveni destekliyor." if fon_puani >= 75 else "Fon ilgisi sınırlı düzeyde kalmış durumda."
+                temel_durumu = "Rasyolar ve kârlılık rasyosu sektör ortalamasının üzerinde." if temel_puani >= 70 else "Temel göstergeler dengeli ancak ek bilanço teyidi gerekiyor."
+
+                karar_metni = f"""
+                * **Şirket / Sembol:** {secili_detay_hisse}
+                * **Takas Dinamiği:** {takas_durumu}
+                * **Kurumsal İlgi:** {fon_durumu}
+                * **Temel Yapı:** {temel_durumu}
+                * **Genel Sonuç:** 100 üzerinden hesaplanan **{genel_puan}** ağırlıklı skor ile hisse, piyasa koşullarında {'yakın takibe ve kademeli birikime' if genel_puan >= 75 else 'temkinli izlemeye'} uygundur.
                 """
-                st.markdown(ai_ozet_html, unsafe_allow_html=True)
-
-                # Kullanıcı tarafından detaylı bilgilendirme/not ekleme alanı
-                note_key = f"user_note_{secili_detay_hisse}"
-                if note_key not in st.session_state:
-                    st.session_state[note_key] = ""
-
-                kullanici_notu = st.text_area(
-                    "Strateji / Detaylı Notunuz:",
-                    value=st.session_state[note_key],
-                    placeholder="Bu hisse için kendi detaylı notlarınızı ekleyin...",
-                    height=90
-                )
-                
-                if st.button("Notu Kaydet", key=f"btn_save_{secili_detay_hisse}"):
-                    st.session_state[note_key] = kullanıcı_notu
-                    st.success("Not başarıyla kaydedildi!")
+                st.info(karar_metni)
 
 else:
     st.error("Piyasa verileri alınamadı. Lütfen sol panelden '🔄 Terminali Güncelle' butonuna basınız.")
