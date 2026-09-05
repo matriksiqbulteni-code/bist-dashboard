@@ -413,7 +413,8 @@ if not df.empty:
     secili_detay_hisse = st.selectbox("Analiz Edilecek Hisseyi Seçin:", hisse_listesi, index=0 if hisse_listesi else None)
 
     if secili_detay_hisse:
-        detay_row = df[df['name'] == secili_detay_hisse].iloc[0] if not df[df['name'] == secili_hisse].empty else None
+        filtered_sub = df[df['name'] == secili_detay_hisse]
+        detay_row = filtered_sub.iloc[0] if not filtered_sub.empty else None
         
         if detay_row is not None:
             takas_puani = np.random.randint(65, 95)
