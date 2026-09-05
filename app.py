@@ -12,20 +12,35 @@ st.set_page_config(
     layout="wide"
 )
 
-# Koyu Tema Arayüz Stili
+# Kart Yazılarını Net Beyaz Yapan CSS Tasarımı
 st.markdown("""
 <style>
-    .stMetric {
-        background-color: #1e222d;
-        border: 1px solid #2a2e39;
-        padding: 12px;
-        border-radius: 8px;
+    /* Kart Zeminleri ve Zorunlu Net Yazı Renkleri */
+    div[data-testid="stMetric"] {
+        background-color: #1a1e29 !important;
+        border: 1px solid #363c4e !important;
+        padding: 16px !important;
+        border-radius: 10px !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    div[data-testid="stMetric"] label {
+        color: #9db2c6 !important;
+        font-size: 0.95rem !important;
+        font-weight: 600 !important;
+    }
+    div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
+        color: #ffffff !important;
+        font-size: 2.2rem !important;
+        font-weight: 700 !important;
+    }
+    div[data-testid="stMetric"] div[data-testid="stMetricDelta"] {
+        font-weight: 600 !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("⚡ BİST Algoritmik EMA 15 / 63 Terminali")
-st.caption("Tablodan istediğiniz hisse satırına tıklayarak alttaki canlı grafiği değiştirebilir veya butona tıklayarak TradingView'de açabilirsiniz.")
+st.caption("Borsa İstanbul'daki tüm hisseler (BİST TÜM) taranır. İncelemek istediğiniz hisseye tıklayarak grafiğini açabilirsiniz.")
 
 # --- Yan Panel ---
 with st.sidebar:
@@ -43,32 +58,35 @@ with st.sidebar:
         index=0
     )
     
+    # Tüm hisselerin gelmesi için varsayılan 0 yapıldı
     min_volume = st.number_input(
-        "Min. İşlem Hacmi (Milyon ₺):",
-        value=1.0,
-        min_value=0.0,
-        step=1.0
-    ) * 1_000_000
+        "Min. İşlem Hacmi Filtresi (TL):",
+        value=0,
+        min_value=0,
+        step=500_000,
+        help="0 bırakırsanız Borsa İstanbul'daki istisnasız tüm hisseler taranır."
+    )
 
     yaklasma_esigi = st.slider(
         "Kesişime Yaklaşma Eşiği (%):",
         min_value=0.1,
-        max_value=3.0,
-        value=1.0,
+        max_value=4.0,
+        value=1.2,
         step=0.1
     )
 
-    tara_butonu = st.button("🔄 Taramayı Yenile", type="primary", use_container_width=True)
+    tara_butonu = st.button("🔄 BİST TÜM Taramayı Yenile", type="primary", use_container_width=True)
 
-# --- Veri Çekme Motoru ---
+# --- Veri Çekme Motoru (BİST TÜM) ---
 @st.cache_data(ttl=30)
-def bist_verilerini_cek(tf, min_vol):
+def bist_tum_verilerini_cek(tf, min_vol):
     tf_suffix = "" if tf == "1D" else f"|{tf}"
     
     c_close = f"close{tf_suffix}"
     c_change = f"change{tf_suffix}"
     c_vol = "volume"
     
+    # BİST'teki 550+ hissenin tamamını çekmek için limit 1000 yapıldı
     query = (
         Query()
         .set_markets('turkey')
@@ -77,15 +95,15 @@ def bist_verilerini_cek(tf, min_vol):
             Column(c_vol) >= min_vol
         )
         .order_by(c_vol, ascending=False)
-        .limit(250)
+        .limit(1000)
     )
     
     _, df = query.get_scanner_data()
     return df, c_close, c_change, c_vol
 
 # --- Tarama ve Hesaplama ---
-with st.spinner("Piyasa verileri alınıyor..."):
-    df, col_close, col_change, col_vol = bist_verilerini_cek(timeframe, min_volume)
+with st.spinner("Borsa İstanbul'daki tüm hisseler taranıyor..."):
+    df, col_close, col_change, col_vol = bist_tum_verilerini_cek(timeframe, min_volume)
 
 if not df.empty:
     df[col_close] = pd.to_numeric(df[col_close], errors='coerce')
@@ -100,8 +118,8 @@ if not df.empty:
     fark_yuzde = ((df[col_close] - df['EMA63']) / df['EMA63']) * 100
     df['Makas_%'] = fark_yuzde.abs()
     
-    df['AL_Sinyali'] = (df[col_change] > 0.5) & (df['Makas_%'] < yaklasma_esigi)
-    df['SAT_Sinyali'] = (df[col_change] < -0.5) & (df['Makas_%'] < yaklasma_esigi)
+    df['AL_Sinyali'] = (df[col_change] > 0.3) & (df['Makas_%'] < yaklasma_esigi)
+    df['SAT_Sinyali'] = (df[col_change] < -0.3) & (df['Makas_%'] < yaklasma_esigi)
     df['Boga_Trendi'] = df[col_close] >= df['EMA63']
 
     toplam_hisse = len(df)
@@ -109,16 +127,16 @@ if not df.empty:
     sat_sayisi = int(df['SAT_Sinyali'].sum())
     boga_orani = (df['Boga_Trendi'].sum() / toplam_hisse * 100) if toplam_hisse > 0 else 0
 
-    # Üst İstatistik Sayaçları
+    # Net Okunan KPI Kartları
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("📊 Taranan Hisse", f"{toplam_hisse}")
+    c1.metric("📊 Taranan BİST Hissesi", f"{toplam_hisse}")
     c2.metric("🟢 AL Sinyali / Kesişim", f"{al_sayisi}")
     c3.metric("🔴 SAT Sinyali / Kesişim", f"{sat_sayisi}")
     c4.metric("⚖️ Piyasa Pozitif Oranı", f"%{boga_orani:.1f}")
 
     st.divider()
 
-    # Varsayılan aktif hisse
+    # Aktif hisse hafızası
     if "aktif_hisse" not in st.session_state:
         st.session_state["aktif_hisse"] = df['name'].iloc[0]
 
@@ -143,11 +161,11 @@ if not df.empty:
                 secilen_indeks = secim1.selection.rows[0]
                 st.session_state["aktif_hisse"] = t1_df.iloc[secilen_indeks]["Sembol"]
         else:
-            st.info("💡 Tam kesişim eşiğinde olan hisse şu an bulunmuyor. Radar sekmesine göz atabilirsiniz.")
+            st.info("💡 Tam kesişim anında olan hisse şu an bulunmuyor. Kesişime en yakın hisseleri görmek için '🎯 Radar' sekmesine bakabilirsiniz.")
 
     with t2:
-        st.markdown("**Listeden bir hisseye tıklayarak alttaki grafiği o hisseyle güncelleyebilirsiniz:**")
-        radar = df.sort_values('Makas_%').head(25).copy()
+        st.markdown("**Aşağıdaki tablodan bir hisseye tıkladığınızda alttaki grafik o hisseye geçiş yapar:**")
+        radar = df.sort_values('Makas_%').head(35).copy()
         radar['Durum'] = radar['Boga_Trendi'].apply(lambda x: "🟢 Pozitif Trend" if x else "🔴 Negatif Trend")
         
         t2_df = radar[['name', 'description', 'Durum', 'Makas_%', col_close, col_change, col_vol]].copy()
@@ -175,7 +193,7 @@ if not df.empty:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # --- ALT BÖLÜM: SEÇİLEN HİSSENİN CANLI GRAFİĞİ ---
+    # --- ALT BÖLÜM: CANLI GRAFİK ---
     st.divider()
     aktif = st.session_state["aktif_hisse"]
 
@@ -190,7 +208,7 @@ if not df.empty:
             use_container_width=True
         )
 
-    # TradingView Gömülü Canlı Widget (BİST Sembol Desteğiyle)
+    # TradingView Gömülü Canlı Widget
     tv_widget = f"""
     <div class="tradingview-widget-container" style="height:550px;width:100%">
       <div id="tv_chart_container" style="height:550px;width:100%"></div>
@@ -205,7 +223,7 @@ if not df.empty:
         "theme": "dark",
         "style": "1",
         "locale": "tr",
-        "toolbar_bg": "#1e222d",
+        "toolbar_bg": "#1a1e29",
         "enable_publishing": false,
         "allow_symbol_change": true,
         "container_id": "tv_chart_container"
@@ -216,4 +234,4 @@ if not df.empty:
     components.html(tv_widget, height=560)
 
 else:
-    st.error("Veri alınamadı. Lütfen sol paneldeki '🔄 Taramayı Yenile' butonuna basınız.")
+    st.error("Veri alınamadı. Lütfen sol paneldeki '🔄 BİST TÜM Taramayı Yenile' butonuna basınız.")
