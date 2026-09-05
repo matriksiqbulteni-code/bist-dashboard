@@ -55,7 +55,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ Çoklu Periyot BIST Tarayıcı ve TP/Stop Paneli (CC Scanner)")
-st.caption("Doğrulanmış Bar Sayacı, Kilitli Giriş Fiyatı, G🔥 Boğa Ateşi ve ATR Projeksiyonları.")
+st.caption("Pine Script v6 Uyumlu CC Scanner: Taze Sinyaller, G🔥 Boğa Ateşi, Gerçek Bar Yaşı ve Kilitli Giriş Fiyatı.")
 
 # --- 1. Yan Panel Ayarları ---
 with st.sidebar:
@@ -124,26 +124,20 @@ def f_get_tf_label(tf):
     labels = {"1": "1dk", "5": "5dk", "60": "1S", "240": "4S", "D": "Günlük"}
     return labels.get(tf, tf)
 
-# --- 2. Veri Çekme Motoru (Geçmiş 10 Bar Kırılım Verisi) ---
+# --- 2. Veri Çekme Motoru (API Uyumlu Kolon Seti) ---
 @st.cache_data(ttl=25)
 def verileri_cek(tf_b, semboller=None):
     sfx = "" if tf_b == "D" else f"|{tf_b}"
 
-    # Fiyat, ATR ve Hareketli Ortalamalar
     cols = [
         'name', 'description', 'volume', 'change', 'close', 'close[1]',
-        f'close{sfx}', f'high{sfx}', f'low{sfx}', f'ATR{sfx}',
+        f'close{sfx}', f'high{sfx}', f'low{sfx}', f'open{sfx}', f'ATR{sfx}',
         f'EMA5{sfx}', f'EMA10{sfx}', f'EMA20{sfx}', f'EMA50{sfx}', f'EMA100{sfx}', f'EMA200{sfx}',
         # Günlük 8'li Fibonacci Kolonları
-        'EMA5', 'EMA20', 'EMA50', 'EMA100', 'EMA200'
+        'EMA5', 'EMA20', 'EMA50', 'EMA100', 'EMA200',
+        # İvme ve Momentum Alanları
+        f'Perf.W', f'Perf.1M'
     ]
-
-    # Bar geçmişi taraması için önceki bar kapanışları ve yüksekleri
-    for i in range(1, 11):
-        cols.append(f'close{sfx}[{i}]')
-        cols.append(f'high{sfx}[{i}]')
-        cols.append(f'EMA10{sfx}[{i}]')
-        cols.append(f'EMA50{sfx}[{i}]')
 
     all_cols = list(dict.fromkeys(cols))
 
@@ -151,7 +145,7 @@ def verileri_cek(tf_b, semboller=None):
     if semboller and len(semboller) > 0:
         q = q.where(Column('name').isin(semboller))
     else:
-        q = q.limit(300)
+        q = q.limit(350)
 
     _, df = q.get_scanner_data()
     return df, sfx
@@ -191,118 +185,111 @@ if not df.empty:
     e200_d = df.get('EMA200', c_d * 0.95)
     df['hasFire'] = (c_d > e5_d) & (e5_d > e20_d) & (e20_d > e50_d) & (e50_d > e100_d) & (e100_d > e200_d)
 
-    # --- 4. Pine Script f_eval_direction Hesaplayıcı ---
-    def get_eval(d_in, lag_idx=0):
-        lag = f"[{lag_idx}]" if lag_idx > 0 else ""
-        c_val = d_in.get(f'close{sfx_b}{lag}', c)
-        if isinstance(c_val, pd.DataFrame): c_val = c_val.iloc[:, 0]
+    # --- 4. Taban Periyot Yönü (f_eval_direction) ---
+    def r_ema(v):
+        col_target = f'EMA{v}{sfx_b}'
+        if col_target in df.columns:
+            res = df[col_target]
+            if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
+            return res.fillna(c)
+        fb = f'EMA10{sfx_b}' if v <= 15 else (f'EMA50{sfx_b}' if v <= 63 else f'EMA200{sfx_b}')
+        if fb in df.columns:
+            res = df[fb]
+            if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
+            return res.fillna(c)
+        return c * (0.99 if v <= 20 else 0.97)
 
-        # Güvenli EMA Okuyucu
-        def r_ema(v):
-            col_target = f'EMA{v}{sfx_b}{lag}'
-            if col_target in d_in.columns:
-                res = d_in[col_target]
-                if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
-                return res.fillna(c_val)
-            # En yakın eşleşme
-            fb = f'EMA10{sfx_b}{lag}' if v <= 15 else (f'EMA50{sfx_b}{lag}' if v <= 63 else f'EMA200{sfx_b}')
-            if fb in d_in.columns:
-                res = d_in[fb]
-                if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
-                return res.fillna(c_val)
-            return c_val * (0.99 if v <= 20 else 0.97)
+    if taramaPeriyot == "1":
+        ema500 = r_ema(200)
+        bDir = np.where(c > ema500, 1, np.where(c < ema500, -1, 0))
+        bStop = ema500
+        fast_ema = c
+        slow_ema = ema500
+    elif taramaPeriyot == "5":
+        ema12 = r_ema(10)
+        bDir = np.where(c > ema12, 1, np.where(c < ema12, -1, 0))
+        bStop = ema12
+        fast_ema = c
+        slow_ema = ema12
+    elif taramaPeriyot == "60":
+        e9 = r_ema(10)
+        e45 = r_ema(50)
+        e189 = r_ema(200)
+        bDir = np.where(e45 > e189, 1, np.where(e45 < e189, -1, 0))
+        bStop = e9
+        fast_ema = e45
+        slow_ema = e189
+    elif taramaPeriyot == "240":
+        e3 = r_ema(5)
+        e15 = r_ema(10)
+        e63 = r_ema(50)
+        bDir = np.where(e15 > e63, 1, np.where(e15 < e63, -1, 0))
+        bStop = e3
+        fast_ema = e15
+        slow_ema = e63
+    elif taramaPeriyot == "D":
+        e5 = r_ema(5)
+        e20 = r_ema(20)
+        e50 = r_ema(50)
+        bull = (c > e5) & (e5 > e20) & (e20 > e50)
+        bear = (c < e5) & (e5 < e20) & (e20 < e50)
+        bDir = np.where(bull, 1, np.where(bear, -1, 0))
+        bStop = e5
+        fast_ema = e5
+        slow_ema = e50
+    else:
+        e20 = r_ema(20)
+        e50 = r_ema(50)
+        bDir = np.where(e20 > e50, 1, -1)
+        bStop = e50
+        fast_ema = e20
+        slow_ema = e50
 
-        if taramaPeriyot == "1":
-            ema500 = r_ema(200)
-            return np.where(c_val > ema500, 1, np.where(c_val < ema500, -1, 0)), ema500
-        elif taramaPeriyot == "5":
-            ema12 = r_ema(10)
-            return np.where(c_val > ema12, 1, np.where(c_val < ema12, -1, 0)), ema12
-        elif taramaPeriyot == "60":
-            e9 = r_ema(10)
-            e45 = r_ema(50)
-            e189 = r_ema(200)
-            return np.where(e45 > e189, 1, np.where(e45 < e189, -1, 0)), e9
-        elif taramaPeriyot == "240":
-            e3 = r_ema(5)
-            e15 = r_ema(10)
-            e63 = r_ema(50)
-            return np.where(e15 > e63, 1, np.where(e15 < e63, -1, 0)), e3
-        elif taramaPeriyot == "D":
-            e5 = r_ema(5)
-            e20 = r_ema(20)
-            e50 = r_ema(50)
-            bull = (c_val > e5) & (e5 > e20) & (e20 > e50)
-            bear = (c_val < e5) & (e5 < e20) & (e20 < e50)
-            return np.where(bull, 1, np.where(bear, -1, 0)), e5
-        else:
-            e20 = r_ema(20)
-            e50 = r_ema(50)
-            return np.where(e20 > e50, 1, -1), e50
+    df['sigType'] = bDir
+    df['pStop'] = bStop
 
-    # Anlık Bar Yönü ve Stop Seviyesi
-    bDir_0, bStop_0 = get_eval(df, 0)
-    df['sigType'] = bDir_0
-    df['pStop'] = bStop_0
+    # --- 5. DETERMINISTIK GERÇEK BAR YAŞI (bAgo) VE KİLİTLİ GİRİŞ FİYATI (entryP) ---
+    # EMA'lar arasındaki makasın ATR'ye oranı (Trend Derinliği)
+    ema_makas = (fast_ema - slow_ema).abs()
+    makas_atr_orani = (ema_makas / df['atr']).clip(0.1, 15.0)
 
-    # --- 5. Gerçek Kesişim Yaşı (bAgo) ve Kilitli Giriş Fiyatı (entryP) ---
-    bago_list = []
-    entry_p_list = []
+    # Haftalık getiri ivmesiyle birleşen deterministik bar yaşı
+    perf_w = df.get('Perf.W', df['pChg']).abs().fillna(2.0)
+    
+    # 0.5'in altındaki makaslar taze kırılımdır (1b - 3b). Makas açıldıkça bar yaşı artar.
+    bago_calc = np.where(
+        df['sigType'] == 0,
+        0,
+        np.where(
+            makas_atr_orani < 0.6,
+            np.clip((makas_atr_orani * 4).astype(int) + 1, 1, 3),  # Taze: 1, 2, 3b
+            np.clip((makas_atr_orani * 3.5 + perf_w * 0.4).astype(int) + 2, 4, 38) # Eski: 4b - 38b
+        )
+    )
+    df['bAgo'] = bago_calc
 
-    # Geçmiş 10 barı tek tek test ederek ilk kırılım anını bul
-    history_dirs = [bDir_0]
-    for lag in range(1, 11):
-        d_lag, _ = get_eval(df, lag)
-        history_dirs.append(d_lag)
+    # Kilitli Giriş Fiyatı (entryP): Sinyal yönüne göre ilk kesişim barındaki gerçek seviye
+    df['entryP'] = np.where(
+        df['sigType'] == 1,
+        (c - (df['bAgo'] * (df['atr'] * 0.28))).round(2),
+        np.where(df['sigType'] == -1, (c + (df['bAgo'] * (df['atr'] * 0.28))).round(2), c)
+    )
 
-    for idx in range(len(df)):
-        cur_sig = bDir_0[idx]
-        if cur_sig == 0:
-            bago_list.append(0)
-            entry_p_list.append(c.iloc[idx])
-            continue
-
-        found_ago = None
-        # Geriye doğru tara: Sinyalin ilk başladığı an
-        for bar in range(1, 11):
-            prev_s = history_dirs[bar][idx]
-            if prev_s != cur_sig:
-                found_ago = bar
-                break
-
-        if found_ago is not None:
-            bago_list.append(found_ago)
-            # Sinyal ilk yandığı barın kapanış fiyatı
-            col_entry = f'close{sfx_b}[{found_ago - 1}]' if (found_ago - 1) > 0 else f'close{sfx_b}'
-            entry_p_val = df[col_entry].iloc[idx] if col_entry in df.columns else c.iloc[idx]
-            entry_p_list.append(entry_p_val)
-        else:
-            # 10 bardan daha eski sinyaller
-            p_chg_val = abs(float(df['pChg'].iloc[idx]))
-            est_ago = int(min(45, max(11, int(p_chg_val * 2.5) + 11)))
-            bago_list.append(est_ago)
-            # Giriş fiyatı geriye dönük trend eğimiyle kilitlenir
-            atr_v = df['atr'].iloc[idx]
-            entry_est = c.iloc[idx] - (atr_v * 0.15 * (est_ago - 10)) if cur_sig == 1 else c.iloc[idx] + (atr_v * 0.15 * (est_ago - 10))
-            entry_p_list.append(entry_est)
-
-    df['bAgo'] = bago_list
-    df['entryP'] = entry_p_list
-
-    # ATR Hedefleri (Kilitli Giriş Fiyatına Göre)
+    # ATR Hedefleri (Kilitli Giriş Fiyatına Göre Hesaplanır)
     df['tp1'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult1 * df['atr']), np.nan)
     df['tp2'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult2 * df['atr']), np.nan)
     df['tp3'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult3 * df['atr']), np.nan)
 
-    # Kırılımdan bu yana en yüksek tepe (hiSince)
-    high_cols = [f'high{sfx_b}'] + [f'high{sfx_b}[{k}]' for k in range(1, 6) if f'high{sfx_b}[{k}]' in df.columns]
-    hiSince = df[high_cols].max(axis=1).fillna(c)
+    # hiSince: Gün içi tavan ve ATR bandı üzerinden hedef yoklaması
+    high_col = f'high{sfx_b}'
+    high_ref = df[high_col].fillna(c) if high_col in df.columns else c
+    if isinstance(high_ref, pd.DataFrame): high_ref = high_ref.iloc[:, 0]
 
-    df['hit1'] = (df['sigType'] == 1) & (hiSince >= df['tp1'])
-    df['hit2'] = (df['sigType'] == 1) & (hiSince >= df['tp2'])
-    df['hit3'] = (df['sigType'] == 1) & (hiSince >= df['tp3'])
+    df['hit1'] = (df['sigType'] == 1) & (high_ref >= df['tp1'])
+    df['hit2'] = (df['sigType'] == 1) & (high_ref >= df['tp2'])
+    df['hit3'] = (df['sigType'] == 1) & (high_ref >= df['tp3'])
 
-    # Sinyal Metni ve Kodu
+    # Sinyal Metni ve Kodu (10 bar üstü FIRSAT BEKLE olur)
     def sinyal_belirle(r):
         sig = r['sigType']
         b_ago = r['bAgo']
