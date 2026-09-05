@@ -403,11 +403,11 @@ if not df.empty:
         )
 
     # ==============================================================================
-    # TAKAS & FON AĞIRLIKLI DETAY ANALİZ PANELİ
+    # TAKAS & FON AĞIRLIKLI DETAY ANALİZ PANELİ (Yapay Zeka & Kullanıcı Notları)
     # ==============================================================================
     st.divider()
     st.subheader("📊 Derinlemesine Takas, Fon ve Temel Analiz Paneli")
-    st.caption("Seçilen hissenin takas değişimleri, fon portföy dağılımları ve ağırlıklı genel puanlama özeti.")
+    st.caption("Seçilen hissenin takas değişimleri, fon portföy dağılımları, ağırlıklı genel puanlama özeti ve kullanıcı/AI notları.")
 
     hisse_listesi = gorunen_df['name'].tolist() if not gorunen_df.empty else df['name'].tolist()
     secili_detay_hisse = st.selectbox("Analiz Edilecek Hisseyi Seçin:", hisse_listesi, index=0 if hisse_listesi else None)
@@ -455,11 +455,33 @@ if not df.empty:
                 r3.metric("Spekülatör Ortalaması", f"{detay_row[c_close_name] * 0.92:,.2f} TL", "Maliyet Üstünde")
             
             with sc2:
-                st.markdown("##### 📌 Karar Özeti")
-                if genel_puan >= 75:
-                    st.success(f"**{secili_detay_hisse}** güçlü fon girişi ve takas toplama bölgesinde yer alıyor.")
-                else:
-                    st.warning(f"**{secili_detay_hisse}** için takas akışı nötr seyrediyor, temkinli olunmalı.")
+                st.markdown("##### 📌 Yapay Zeka & Kullanıcı Karar Notu")
+                
+                # Otomatik Yapay Zeka Özeti
+                durum_metni = "güçlü takas toplama ve fon girişi" if genel_puan >= 75 else "yatay takas akışı ve temkinli seyir"
+                ai_ozet_html = f"""
+                <div style="background-color: #0f172a; border: 1px solid #334155; padding: 10px; border-radius: 6px; font-size: 0.9rem; margin-bottom: 10px;">
+                    <b>🤖 AI Değerlendirmesi:</b><br>
+                    {secili_detay_hisse} hissesi {genel_puan} nihai skor ile şu anda <b>{durum_metni}</b> bölgesindedir. Takas puanı ({takas_puani}/100) ve fon ilgisi göz önüne alındığında orta/uzun vadeli portföy takibine uygundur.
+                </div>
+                """
+                st.markdown(ai_ozet_html, unsafe_allow_html=True)
+
+                # Kullanıcı tarafından detaylı bilgilendirme/not ekleme alanı
+                note_key = f"user_note_{secili_detay_hisse}"
+                if note_key not in st.session_state:
+                    st.session_state[note_key] = ""
+
+                kullanici_notu = st.text_area(
+                    "Strateji / Detaylı Notunuz:",
+                    value=st.session_state[note_key],
+                    placeholder="Bu hisse için kendi detaylı notlarınızı ekleyin...",
+                    height=90
+                )
+                
+                if st.button("Notu Kaydet", key=f"btn_save_{secili_detay_hisse}"):
+                    st.session_state[note_key] = kullanıcı_notu
+                    st.success("Not başarıyla kaydedildi!")
 
 else:
     st.error("Piyasa verileri alınamadı. Lütfen sol panelden '🔄 Terminali Güncelle' butonuna basınız.")
