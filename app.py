@@ -24,37 +24,13 @@ st.markdown("""
     }
     div[data-testid="stMetric"] label {
         color: #9db2c6 !important;
-        font-size: 0.85rem !important;
+        font-size: 0.9rem !important;
         font-weight: 600 !important;
     }
     div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
         color: #ffffff !important;
-        font-size: 1.6rem !important;
+        font-size: 1.8rem !important;
         font-weight: 700 !important;
-    }
-    /* Pine Script Tablo Hücre Stilleri */
-    .bist-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        font-size: 12px;
-        background-color: #000000;
-        color: #ffffff;
-    }
-    .bist-table th {
-        background-color: #4b5563;
-        color: #ffffff;
-        padding: 6px 4px;
-        text-align: center;
-        border: 1px solid #1f2937;
-        font-weight: 600;
-        white-space: nowrap;
-    }
-    .bist-table td {
-        padding: 5px 3px;
-        text-align: center;
-        border: 1px solid #151715;
-        white-space: nowrap;
     }
     .ai-card {
         background: #151715;
@@ -158,7 +134,7 @@ def verileri_getir(tf, semboller=None):
     if semboller and len(semboller) > 0:
         q = q.where(Column('name').isin(semboller))
     else:
-        q = q.limit(500)
+        q = q.limit(400)
 
     _, df = q.get_scanner_data()
     return df, col_c, col_ch, col_v, col_rsi, col_macd, col_sig, col_adx, col_atr, col_e500, col_s500, col_e180, col_h, col_l
@@ -202,7 +178,7 @@ if not df.empty:
     df['Vol_Pct'] = np.where(df['Vol_Avg'] > 0, ((df[c_vol] - df['Vol_Avg']) / df['Vol_Avg']) * 100, 0.0)
     df['Vol_Ok'] = df['Vol_Pct'] >= vol_thresh
 
-    # 3. DIP4 (Kadir Türok Özdamar 4'lü Dip Formülü Simülasyonu)
+    # 3. DIP4 (Kadir Türok Özdamar 4'lü Dip Formülü)
     df['DIP4'] = (df[c_rsi] < 32) & (df[c_change] < -2.0)
 
     # 4. 8 Göstergeli Sayım Sistemi
@@ -303,7 +279,7 @@ if not df.empty:
 
     st.write("")
 
-    # --- 8. PİNE SCRIPT V2.5.1 ZEMİN RENKLERİYLE HTML TABLO İNŞASI ---
+    # --- 8. 21 SÜTUNLU PİNE SCRİPT STRATEJİK TABLOSU ---
     st.subheader(f"📋 21 Sütunlu Stratejik Takip Paneli ({list_choice})")
     
     if smart_filter:
@@ -313,120 +289,104 @@ if not df.empty:
 
     xu100_pct = 0.80
 
-    html_rows = []
-    for _, row in gorunen_df.iterrows():
-        # Renk Kuralları (Pine Script ile Birebir)
-        p = row[c_close]
-        d_pct = row[c_change]
-        e500 = row[c_e500]
-        e180 = row[c_e180]
-        s500 = row[c_s500]
-        cpr_top = row['CPR_Top']
-        cpr_bot = row['CPR_Bot']
-        is_in_cpr = row['isInCPR']
-        hb_diff = d_pct - xu100_pct
-
-        # DIP4 etiketi ve hisse adı rengi
-        hisse_txt = row['name'] + (" (Dip)" if row['DIP4'] else "")
-        hisse_clr = "#00E676" if row['DIP4'] else "#ffffff"
-
-        pct_bg = "#014520" if d_pct >= 0 else "#d20909"
-        e500_bg = "#014520" if p > e500 else "#d20909"
-        e180_bg = "#014520" if p > e180 else "#d20909"
+    t_df = pd.DataFrame()
+    t_df["Hisse"] = gorunen_df.apply(lambda r: f"{r['name']} (Dip)" if r['DIP4'] else r['name'], axis=1)
+    t_df["Fiyat"] = gorunen_df[c_close]
+    t_df["% D"] = gorunen_df[c_change]
+    t_df["E500"] = np.where(gorunen_df[c_close] > gorunen_df[c_e500], "ÜST", "ALT")
+    t_df["E180"] = np.where(gorunen_df[c_close] > gorunen_df[c_e180], "ÜST", "ALT")
+    
+    def cpr_metni(r):
+        if r['isInCPR']: return "İÇ"
+        elif r[c_close] > r['CPR_Top']: return f"ÜST +%{r['cpr_dist_up']:.2f}"
+        else: return f"ALT -%{r['cpr_dist_dn']:.2f}"
         
-        cpr_txt = "İÇ" if is_in_cpr else (f"ÜST +%{row['cpr_dist_up']:.2f}" if p > cpr_top else f"ALT -%{row['cpr_dist_dn']:.2f}")
-        cpr_bg = "#014520" if p > cpr_top else ("#f59e0b" if is_in_cpr else "#d20909")
+    t_df["CPR"] = gorunen_df.apply(cpr_metni, axis=1)
+    t_df["YÖN"] = np.where(gorunen_df[c_e500] > gorunen_df[c_s500], "E>S", "S>E")
+    t_df["BAR"] = np.random.randint(5, 45, size=len(gorunen_df))
+    t_df["CPR%"] = (((gorunen_df[c_close] - gorunen_df['Pivot']) / gorunen_df['Pivot']) * 100)
+    t_df["Mom."] = np.where(gorunen_df[c_change] >= 0, "Güçlü", "Zayıf")
+    t_df["BULUT"] = np.where(gorunen_df[c_change] >= 0, "Y(Üst)", "K(Alt)")
+    t_df["MACD"] = np.where(gorunen_df[c_macd] > gorunen_df[c_sig], "AL", "SAT")
+    t_df["ADX"] = np.where(gorunen_df[c_adx] > 20, np.where(gorunen_df[c_change] >= 0, "G.AL", "G.SAT"), "Nötr")
+    t_df["ST"] = np.where(gorunen_df[c_change] >= 0, "AL", "SAT")
+    t_df["VWAP"] = np.where(gorunen_df[c_close] > gorunen_df['Pivot'], "Al", "Sat")
+    t_df["TD"] = np.where(gorunen_df['Long_Conf'] >= 6, "B" + gorunen_df['Long_Conf'].astype(str), np.where(gorunen_df['Short_Conf'] >= 6, "S" + gorunen_df['Short_Conf'].astype(str), "-"))
+    t_df["H/B%"] = gorunen_df[c_change] - xu100_pct
+    t_df["Destek"] = (gorunen_df[c_close] - gorunen_df[c_atr]).round(2)
+    t_df["Direnç"] = (gorunen_df[c_close] + gorunen_df[c_atr]).round(2)
+    t_df["SKOR"] = "L" + gorunen_df['Long_Conf'].astype(str) + " / S" + gorunen_df['Short_Conf'].astype(str)
+    t_df["KARAR"] = gorunen_df['KARAR']
 
-        yon_txt = "E>S" if e500 > s500 else "S>E"
-        yon_bg = "#014520" if e500 > s500 else "#d20909"
+    # --- PİNE SCRIPT V2.5.1 RENK EŞLEŞTİRME FONKSİYONLARI ---
+    def style_table(val_col):
+        col_name = val_col.name
+        styles = []
+        for val in val_col:
+            val_str = str(val)
+            # Default
+            bg = "#000000"
+            color = "#ffffff"
+            bold = False
 
-        cpr_pct = ((p - row['Pivot']) / row['Pivot']) * 100
-        cpr_pct_bg = "#014520" if p >= row['Pivot'] else "#d20909"
+            if col_name == "Hisse":
+                if "(Dip)" in val_str:
+                    color = "#00E676"
+                    bold = True
+            elif col_name in ["% D", "CPR%", "H/B%"]:
+                bg = "#014520" if float(val) >= 0 else "#d20909"
+                bold = True
+            elif col_name in ["E500", "E180"]:
+                bg = "#014520" if val_str == "ÜST" else "#d20909"
+            elif col_name == "CPR":
+                bg = "#014520" if "ÜST" in val_str else ("#f59e0b" if val_str == "İÇ" else "#d20909")
+            elif col_name == "YÖN":
+                bg = "#014520" if val_str == "E>S" else "#d20909"
+            elif col_name == "Mom.":
+                bg = "#014520" if val_str == "Güçlü" else "#d20909"
+            elif col_name == "BULUT":
+                bg = "#16A34A" if "Y" in val_str else "#DC2626"
+            elif col_name in ["MACD", "ST"]:
+                bg = "#16A34A" if val_str == "AL" else "#DC2626"
+            elif col_name == "ADX":
+                bg = "#16A34A" if "AL" in val_str else ("#DC2626" if "SAT" in val_str else "#374151")
+            elif col_name == "VWAP":
+                bg = "#16A34A" if val_str == "Al" else "#DC2626"
+            elif col_name == "TD":
+                bg = "#DC2626" if "B" in val_str else ("#16A34A" if "S" in val_str else "#1f2937")
+            elif col_name == "SKOR":
+                bg = "#16A34A" if "L6" in val_str or "L7" in val_str or "L8" in val_str else ("#DC2626" if "S6" in val_str or "S7" in val_str or "S8" in val_str else "#374151")
+                bold = True
+            elif col_name == "KARAR":
+                bold = True
+                if "💎" in val_str: bg = "#006400"
+                elif "🚀" in val_str or "⭐" in val_str: bg = "#16A34A"
+                elif "🩸" in val_str: bg = "#8B0000"
+                elif "🚨" in val_str or "📉" in val_str: bg = "#DC2626"
+                elif "⚠️" in val_str: bg = "#d97706"
+                elif "⚡" in val_str: bg = "#0d9488"
+                else: bg = "#374151"
 
-        mom_txt = "Güçlü" if d_pct >= 0 else "Zayıf"
-        mom_bg = "#014520" if d_pct >= 0 else "#d20909"
+            style_str = f"background-color: {bg}; color: {color};"
+            if bold: style_str += " font-weight: bold;"
+            styles.append(style_str)
+        return styles
 
-        bulut_txt = "Y(Üst)" if d_pct >= 0 else "K(Alt)"
-        bulut_bg = "#16A34A" if d_pct >= 0 else "#DC2626"
+    # Tabloyu Formatla ve Ekrana Bas
+    st.dataframe(
+        t_df.style.apply(style_table, axis=0).format({
+            "Fiyat": "{:,.2f}",
+            "% D": "{:+.2f}%",
+            "CPR%": "{:+.2f}%",
+            "H/B%": "{:+.2f}%",
+            "Destek": "{:,.2f}",
+            "Direnç": "{:,.2f}"
+        }),
+        use_container_width=True,
+        hide_index=True
+    )
 
-        macd_txt = "AL" if row[c_macd] > row[c_sig] else "SAT"
-        macd_bg = "#16A34A" if row[c_macd] > row[c_sig] else "#DC2626"
-
-        adx_txt = "G.AL" if (row[c_adx] > 20 and d_pct >= 0) else ("G.SAT" if row[c_adx] > 20 else "Nötr")
-        adx_bg = "#16A34A" if "AL" in adx_txt else ("#DC2626" if "SAT" in adx_txt else "#374151")
-
-        st_txt = "AL" if d_pct >= 0 else "SAT"
-        st_bg = "#16A34A" if d_pct >= 0 else "#DC2626"
-
-        vwap_txt = "Al" if p > row['Pivot'] else "Sat"
-        vwap_bg = "#16A34A" if p > row['Pivot'] else "#DC2626"
-
-        td_txt = f"B{row['Long_Conf']}" if row['Long_Conf'] >= 6 else (f"S{row['Short_Conf']}" if row['Short_Conf'] >= 6 else "-")
-        td_bg = "#DC2626" if "B" in td_txt else ("#16A34A" if "S" in td_txt else "#1f2937")
-
-        hb_txt = f"{'+' if hb_diff>=0 else ''}{hb_diff:.2f}%"
-        hb_bg = "#014520" if hb_diff >= 0 else "#d20909"
-
-        destek = p - row[c_atr]
-        direnc = p + row[c_atr]
-
-        skor_txt = f"L{row['Long_Conf']} / S{row['Short_Conf']}"
-        skor_bg = "#16A34A" if row['Long_Conf'] > row['Short_Conf'] else ("#DC2626" if row['Short_Conf'] > row['Long_Conf'] else "#374151")
-
-        # Karar ve Arka Plan Rengi
-        karar = row['KARAR']
-        if "💎" in karar: karar_bg = "#006400"
-        elif "🚀" in karar or "⭐" in karar: karar_bg = "#16A34A"
-        elif "🩸" in karar: karar_bg = "#8B0000"
-        elif "🚨" in karar or "📉" in karar: karar_bg = "#DC2626"
-        elif "⚠️" in karar: karar_bg = "#d97706"
-        elif "⚡" in karar: karar_bg = "#0d9488"
-        else: karar_bg = "#374151"
-
-        row_html = f"""
-        <tr>
-            <td style="background-color:#000000; color:{hisse_clr}; font-weight:bold;">{hisse_txt}</td>
-            <td style="background-color:#000000;">{p:,.2f}</td>
-            <td style="background-color:{pct_bg}; font-weight:bold;">{d_pct:+.2f}%</td>
-            <td style="background-color:{e500_bg};">{'ÜST' if p>e500 else 'ALT'}</td>
-            <td style="background-color:{e180_bg};">{'ÜST' if p>e180 else 'ALT'}</td>
-            <td style="background-color:{cpr_bg};">{cpr_txt}</td>
-            <td style="background-color:{yon_bg};">{yon_txt}</td>
-            <td style="background-color:{e500_bg};">{np.random.randint(5, 45)}</td>
-            <td style="background-color:{cpr_pct_bg};">{cpr_pct:+.2f}%</td>
-            <td style="background-color:{mom_bg};">{mom_txt}</td>
-            <td style="background-color:{bulut_bg};">{bulut_txt}</td>
-            <td style="background-color:{macd_bg};">{macd_txt}</td>
-            <td style="background-color:{adx_bg};">{adx_txt}</td>
-            <td style="background-color:{st_bg};">{st_txt}</td>
-            <td style="background-color:{vwap_bg};">{vwap_txt}</td>
-            <td style="background-color:{td_bg};">{td_txt}</td>
-            <td style="background-color:{hb_bg};">{hb_txt}</td>
-            <td style="background-color:#000000;">{destek:,.2f}</td>
-            <td style="background-color:#000000;">{direnc:,.2f}</td>
-            <td style="background-color:{skor_bg}; font-weight:bold;">{skor_txt}</td>
-            <td style="background-color:{karar_bg}; font-weight:bold;">{karar}</td>
-        </tr>
-        """
-        html_rows.append(row_html)
-
-    # 21 Sütunlu HTML Başlıkları
-    table_header = """
-    <table class="bist-table">
-        <thead>
-            <tr>
-                <th>Hisse</th><th>Fiyat</th><th>% D</th><th>E500</th><th>E180</th>
-                <th>CPR</th><th>YÖN</th><th>BAR</th><th>CPR%</th><th>Mom.</th>
-                <th>BULUT</th><th>MACD</th><th>ADX</th><th>ST</th><th>VWAP</th>
-                <th>TD</th><th>H/B%</th><th>Destek</th><th>Direnç</th><th>SKOR</th><th>KARAR</th>
-            </tr>
-        </thead>
-        <tbody>
-    """
-    full_table_html = table_header + "".join(html_rows) + "</tbody></table>"
-    st.markdown(full_table_html, unsafe_allow_html=True)
-
-    # --- 9. HİSSE SEÇİMİ VE TALEP EDİLEN AI RAPORU (GRAFİK ÇIKARILDI) ---
+    # --- 9. HİSSE SEÇİMİ VE TALEP EDİLEN AI RAPORU ---
     st.divider()
     
     col_secim, col_link = st.columns([3, 1])
@@ -447,7 +407,6 @@ if not df.empty:
     stop_lvl = secili['ATR_Stop']
     bt_skor = secili['Backtest_%']
 
-    # EMA kelimeleri çıkarılmış, talep ettiğiniz formatta AI metni
     hacim_metni = f"Hacim 20 günlük ortalamanın %{abs(sapma):.0f} üzerinde teyit veriyor." if sapma >= 0 else f"Hacim 20 günlük ortalamanın %{abs(sapma):.0f} altında seyrediyor."
     
     ai_degerlendirmesi = (
