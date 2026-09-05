@@ -12,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Koyu Tema CSS
+# Koyu Tema Arayüz Stili
 st.markdown("""
 <style>
     .stMetric {
@@ -25,7 +25,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ BİST Algoritmik EMA 15 / 63 Terminali")
-st.caption("Tablodan dilediğiniz hisseye tıklayarak anında alttaki canlı grafikte inceleyebilirsiniz.")
+st.caption("Tablodan istediğiniz hisse satırına tıklayarak alttaki canlı grafiği değiştirebilir veya butona tıklayarak TradingView'de açabilirsiniz.")
 
 # --- Yan Panel ---
 with st.sidebar:
@@ -109,7 +109,7 @@ if not df.empty:
     sat_sayisi = int(df['SAT_Sinyali'].sum())
     boga_orani = (df['Boga_Trendi'].sum() / toplam_hisse * 100) if toplam_hisse > 0 else 0
 
-    # Üst Sayaçlar
+    # Üst İstatistik Sayaçları
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("📊 Taranan Hisse", f"{toplam_hisse}")
     c2.metric("🟢 AL Sinyali / Kesişim", f"{al_sayisi}")
@@ -118,12 +118,12 @@ if not df.empty:
 
     st.divider()
 
-    # Tablo ve Seçim Alanı
-    t1, t2, t3 = st.tabs(["🔥 Kesişim & Sinyal Tablosu", "🎯 Kesişime Yaklaşanlar (Radar)", "📊 Hacim Dağılımı"])
-
-    # Varsayılan seçili hisse oturumu
+    # Varsayılan aktif hisse
     if "aktif_hisse" not in st.session_state:
         st.session_state["aktif_hisse"] = df['name'].iloc[0]
+
+    # Sekmeler
+    t1, t2, t3 = st.tabs(["🔥 Kesişim & Sinyal Tablosu", "🎯 Kesişime Yaklaşanlar (Radar)", "📊 Hacim Dağılımı"])
 
     with t1:
         sinyal_verenler = df[df['AL_Sinyali'] | df['SAT_Sinyali']].copy()
@@ -146,7 +146,7 @@ if not df.empty:
             st.info("💡 Tam kesişim eşiğinde olan hisse şu an bulunmuyor. Radar sekmesine göz atabilirsiniz.")
 
     with t2:
-        st.markdown(f"**Aşağıdaki tablodan herhangi bir hisseye tıklayarak alttaki grafiği güncelleyebilirsiniz:**")
+        st.markdown("**Listeden bir hisseye tıklayarak alttaki grafiği o hisseyle güncelleyebilirsiniz:**")
         radar = df.sort_values('Makas_%').head(25).copy()
         radar['Durum'] = radar['Boga_Trendi'].apply(lambda x: "🟢 Pozitif Trend" if x else "🔴 Negatif Trend")
         
@@ -175,7 +175,7 @@ if not df.empty:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # --- ALT BÖLÜM: SEÇİLEN HİSSENİN GRAFİĞİ ---
+    # --- ALT BÖLÜM: SEÇİLEN HİSSENİN CANLI GRAFİĞİ ---
     st.divider()
     aktif = st.session_state["aktif_hisse"]
 
@@ -183,9 +183,14 @@ if not df.empty:
     with col_grafik_baslik:
         st.subheader(f"🔍 Canlı Grafik: BIST:{aktif}")
     with col_harici_link:
-        st.link_button(f"🔗 {aktif} Grafiğini TradingView'de Aç", f"https://tr.tradingview.com/chart/?symbol=BIST:{aktif}")
+        st.link_button(
+            label=f"🚀 {aktif} Grafiğini TradingView'de Aç",
+            url=f"https://tr.tradingview.com/chart/?symbol=BIST:{aktif}",
+            type="primary",
+            use_container_width=True
+        )
 
-    # Doğru BİST parametreleriyle TradingView Advanced Widget
+    # TradingView Gömülü Canlı Widget (BİST Sembol Desteğiyle)
     tv_widget = f"""
     <div class="tradingview-widget-container" style="height:550px;width:100%">
       <div id="tv_chart_container" style="height:550px;width:100%"></div>
@@ -200,7 +205,7 @@ if not df.empty:
         "theme": "dark",
         "style": "1",
         "locale": "tr",
-        "toolbar_bg": "#f1f3f6",
+        "toolbar_bg": "#1e222d",
         "enable_publishing": false,
         "allow_symbol_change": true,
         "container_id": "tv_chart_container"
