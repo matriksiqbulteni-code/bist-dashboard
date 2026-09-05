@@ -124,21 +124,28 @@ def f_get_tf_label(tf):
 
 upperTF = f_get_higher_tf(taramaPeriyot)
 
-# --- 3. Veri Çekme Motoru (KeyError Vermeyen Güvenli Set) ---
+# --- 3. Veri Çekme Motoru (Yinelenen Kolonlar Çözüldü) ---
 @st.cache_data(ttl=25)
 def verileri_cek(tf_b, tf_u, semboller=None):
     sfx_b = "" if tf_b == "D" else f"|{tf_b}"
-    sfx_u = "" if tf_u in ["D", "W"] else f"|{tf_u}"
+    sfx_u = "|1W" if tf_u == "W" else ("" if tf_u == "D" else f"|{tf_u}")
 
-    # TV Screener'da kesinlikle var olan alanlar
-    cols = [
-        'name', 'description', 'volume', 'change',
+    # Taban periyot için alanlar
+    cols_base = [
         f'close{sfx_b}', f'high{sfx_b}', f'low{sfx_b}', f'ATR{sfx_b}',
-        f'EMA5{sfx_b}', f'EMA10{sfx_b}', f'EMA20{sfx_b}', f'EMA50{sfx_b}', f'EMA100{sfx_b}', f'EMA200{sfx_b}',
-        f'close{sfx_u}', f'EMA5{sfx_u}', f'EMA10{sfx_u}', f'EMA20{sfx_u}', f'EMA50{sfx_u}', f'EMA100{sfx_u}', f'EMA200{sfx_u}'
+        f'EMA5{sfx_b}', f'EMA10{sfx_b}', f'EMA20{sfx_b}', f'EMA50{sfx_b}', f'EMA100{sfx_b}', f'EMA200{sfx_b}'
     ]
 
-    q = Query().set_markets('turkey').select(*cols).order_by('volume', ascending=False)
+    # Üst periyot için alanlar
+    cols_upper = [
+        f'close{sfx_u}',
+        f'EMA5{sfx_u}', f'EMA10{sfx_u}', f'EMA20{sfx_u}', f'EMA50{sfx_u}', f'EMA100{sfx_u}', f'EMA200{sfx_u}'
+    ]
+
+    # Tekilleştirilmiş kolon kümesi
+    all_cols = list(dict.fromkeys(['name', 'description', 'volume', 'change'] + cols_base + cols_upper))
+
+    q = Query().set_markets('turkey').select(*all_cols).order_by('volume', ascending=False)
     if semboller and len(semboller) > 0:
         q = q.where(Column('name').isin(semboller))
     else:
@@ -152,35 +159,57 @@ with st.spinner(f"CC Scanner motoru çalışıyor ({f_get_tf_label(taramaPeriyot
     df, sfx_b, sfx_u = verileri_cek(taramaPeriyot, upperTF, target_list)
 
 if not df.empty:
+    # Sayısal dönüştürmeyi güvenli uygulama (2D/Series hatasını önler)
     for col in df.columns:
         if col not in ['name', 'description']:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+            series = df[col]
+            if isinstance(series, pd.DataFrame):
+                series = series.iloc[:, 0]
+            df[col] = pd.to_numeric(series, errors='coerce')
 
-    c_close = f'close{sfx_b}'
-    df = df.dropna(subset=[c_close]).copy()
-    c = df[c_close]
+    c_close_name = f'close{sfx_b}'
+    c_series = df[c_close_name]
+    if isinstance(c_series, pd.DataFrame):
+        c_series = c_series.iloc[:, 0]
+    df = df.dropna(subset=[c_close_name]).copy()
+    c = df[c_close_name]
+    if isinstance(c, pd.DataFrame):
+        c = c.iloc[:, 0]
 
-    df['pChg'] = df['change'].fillna(0.0)
-    df['atr'] = df[f'ATR{sfx_b}'].fillna(c * 0.02)
+    chg_s = df['change']
+    if isinstance(chg_s, pd.DataFrame):
+        chg_s = chg_s.iloc[:, 0]
+    df['pChg'] = chg_s.fillna(0.0)
 
-    # --- 4. KeyError Güvenlikli f_eval_direction Fonksiyonu ---
+    atr_col = f'ATR{sfx_b}'
+    if atr_col in df.columns:
+        atr_s = df[atr_col]
+        if isinstance(atr_s, pd.DataFrame):
+            atr_s = atr_s.iloc[:, 0]
+        df['atr'] = atr_s.fillna(c * 0.02)
+    else:
+        df['atr'] = c * 0.02
+
+    # --- 4. Güvenli f_eval_direction Fonksiyonu ---
     def eval_direction(d, tf, sfx):
         fiyat = d.get(f'close{sfx}', c)
-        
-        # Güvenli kolon okuyucu (Varsa alır, yoksa fiyat bazlı türetir)
+        if isinstance(fiyat, pd.DataFrame):
+            fiyat = fiyat.iloc[:, 0]
+
         def g_ema(val, mult=1.0):
             col = f'EMA{val}{sfx}'
             if col in d.columns:
-                return d[col].fillna(fiyat * mult)
-            # En yakın standart EMA'yı fallback yap
-            if val <= 15:
-                return d.get(f'EMA10{sfx}', fiyat * mult).fillna(fiyat * mult)
-            elif val <= 63:
-                return d.get(f'EMA50{sfx}', fiyat * mult).fillna(fiyat * mult)
-            elif val <= 189:
-                return d.get(f'EMA100{sfx}', fiyat * mult).fillna(fiyat * mult)
-            else:
-                return d.get(f'EMA200{sfx}', fiyat * mult).fillna(fiyat * mult)
+                res = d[col]
+                if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
+                return res.fillna(fiyat * mult)
+            
+            # En yakın mevcut EMA'yı fallback olarak kullan
+            target = f'EMA10{sfx}' if val <= 15 else (f'EMA50{sfx}' if val <= 63 else (f'EMA100{sfx}' if val <= 189 else f'EMA200{sfx}'))
+            if target in d.columns:
+                res = d[target]
+                if isinstance(res, pd.DataFrame): res = res.iloc[:, 0]
+                return res.fillna(fiyat * mult)
+            return fiyat * mult
 
         if tf == "1":
             ema500 = g_ema(200, 0.98)
@@ -218,19 +247,17 @@ if not df.empty:
             dir_s = np.where(e20 > e50, 1, -1)
             stop_s = e50
 
-        return dir_s, stop_s
+        return pd.Series(dir_s, index=d.index), pd.Series(stop_s, index=d.index)
 
-    # Taban ve Üst Periyot Yönleri
     bDir, bStop = eval_direction(df, taramaPeriyot, sfx_b)
     uDir, uStop = eval_direction(df, upperTF, sfx_u)
 
-    # Sinyal Belirleme (CC Scanner)[cite: 3]
+    # CC Scanner Sinyal Modeli[cite: 3]
     df['sigType'] = np.where(bDir == 1, np.where(uDir == 1, 2, 1), np.where(bDir == -1, -1, 0))
     df['pStop'] = bStop
     df['entryP'] = c
 
     # Deterministik Bar Sayacı (Yenilemede Değişmez)
-    # Hissenin gün içi getiri yüzdesine göre deterministik olarak türetilir
     df['bAgo'] = ((df['pChg'].abs() * 1.5).astype(int) % 12) + 1
 
     # ATR Hedefleri[cite: 3]
@@ -238,7 +265,11 @@ if not df.empty:
     df['tp2'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult2 * df['atr']), np.nan)
     df['tp3'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult3 * df['atr']), np.nan)
 
-    high_ref = df[f'high{sfx_b}'].fillna(c)
+    high_col = f'high{sfx_b}'
+    high_ref = df[high_col].fillna(c) if high_col in df.columns else c
+    if isinstance(high_ref, pd.DataFrame):
+        high_ref = high_ref.iloc[:, 0]
+
     df['hit1'] = (df['sigType'] >= 1) & (high_ref >= df['tp1'])
     df['hit2'] = (df['sigType'] >= 1) & (high_ref >= df['tp2'])
     df['hit3'] = (df['sigType'] >= 1) & (high_ref >= df['tp3'])
@@ -278,7 +309,7 @@ if not df.empty:
 
     st.write("")
 
-    # --- 7. CC Scanner Tablosunun Oluşturulması ---
+    # --- 7. CC Scanner Tablosu ---
     gorunen_df = df[df['sigType'] != 0].copy() if sadeceSinyaller else df.copy()
     if gorunen_df.empty:
         st.info("Aktif sinyal bulunamadı. Tüm liste gösteriliyor.")
@@ -288,7 +319,7 @@ if not df.empty:
 
     t_rows = []
     for _, row in gorunen_df.iterrows():
-        p_close = row[c_close]
+        p_close = row[c_close_name]
         p_chg = row['pChg']
         sig = row['sigType']
         e_p = row['entryP']
@@ -389,7 +420,7 @@ if not df.empty:
     )
     st.caption("Terminal Motoru: **@campCapital** & **HsnCLBK**[cite: 3]")
 
-    # --- 9. AI Teknik Değerlendirmesi (EMA Kelimeleri Geçmeden) ---
+    # --- 9. AI Teknik Değerlendirmesi ---
     st.divider()
     hisse_list = gorunen_df['name'].tolist()
     secili_hisse = st.selectbox("AI Analizi Alınacak Hisseyi Seçin:", hisse_list, index=0)
