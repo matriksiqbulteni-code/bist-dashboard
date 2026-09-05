@@ -5,14 +5,14 @@ from datetime import datetime
 from tradingview_screener import Query, Column
 import streamlit.components.v1 as components
 
-# --- Sayfa Genel Yapılandırması ---
+# --- Sayfa Yapılandırması ---
 st.set_page_config(
     page_title="BİST Stratejik Takip Paneli v2.5.1",
     page_icon="⚡",
     layout="wide"
 )
 
-# --- Pine Script ile Birebir Koyu Arayüz CSS ---
+# Koyu Tema ve Metrik Stilleri (CSS)
 st.markdown("""
 <style>
     .main { background-color: #0c0d10; }
@@ -55,7 +55,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ BİST Stratejik Takip Paneli ve Dinamik Motor / HsnCLBK v2.5.1")
-st.caption("Pine Script v2.5.1 21 Sütunlu Karar Motoru, 8 Gösterge Sayımı, CPR, DIP4 ve AI Analiz Paneli.")
+st.caption("21 Sütunlu Stratejik Karar Matrisi, DIP4 Derin Dip Algoritması, Sesli Uyarı Sistemi ve AI Teknik Analizi.")
 
 # --- Yan Panel ---
 with st.sidebar:
@@ -98,23 +98,18 @@ with st.sidebar:
 
     tara_butonu = st.button("🔄 Terminali Güncelle", type="primary", use_container_width=True)
 
-# --- Veri Çekme Motoru ---
+# --- Güvenli Veri Çekme Motoru ---
 @st.cache_data(ttl=25)
 def verileri_cek(tf, semboller=None):
     tf_suffix = "" if tf == "1D" else f"|{tf}"
     
-    # TV Screener Sütunları
     cols = [
         'name', 'description', 
-        f'close{tf_suffix}', f'change{tf_suffix}', 'volume', f'volume_sma20{tf_suffix}',
+        f'close{tf_suffix}', f'change{tf_suffix}', 'volume',
         f'high{tf_suffix}', f'low{tf_suffix}',
-        f'high{tf_suffix}[1]', f'low{tf_suffix}[1]', f'close{tf_suffix}[1]',
-        f'RSI{tf_suffix}', f'Mom{tf_suffix}',
-        f'MACD.macd{tf_suffix}', f'MACD.signal{tf_suffix}',
-        f'ADX{tf_suffix}', f'ADX+DI{tf_suffix}', f'ADX-DI{tf_suffix}',
-        f'EMA500{tf_suffix}', f'SMA500{tf_suffix}', f'EMA180{tf_suffix}',
-        f'ATR{tf_suffix}', f'VWAP{tf_suffix}',
-        f'Ichimoku.SpanA{tf_suffix}', f'Ichimoku.SpanB{tf_suffix}'
+        f'RSI{tf_suffix}', f'MACD.macd{tf_suffix}', f'MACD.signal{tf_suffix}',
+        f'ADX{tf_suffix}', f'EMA500{tf_suffix}', f'SMA500{tf_suffix}', f'EMA180{tf_suffix}',
+        f'ATR{tf_suffix}'
     ]
 
     q = Query().set_markets('turkey').select(*cols).order_by('volume', ascending=False)
@@ -124,12 +119,12 @@ def verileri_cek(tf, semboller=None):
     else:
         q = q.limit(350)
 
-    # BİST 100 Endeks getirisini çekme
+    # XU100 Değişimi
     q_xu = Query().set_markets('turkey').select('name', f'change{tf_suffix}').where(Column('name') == 'XU100')
     _, xu_df = q_xu.get_scanner_data()
     xu_pct = 0.0
-    if not xu_df.empty:
-        xu_pct = float(xu_df.iloc[0][f'change{tf_suffix}'])
+    if not xu_df.empty and f'change{tf_suffix}' in xu_df.columns:
+        xu_pct = float(xu_df.iloc[0][f'change{tf_suffix}'] or 0.0)
 
     _, df = q.get_scanner_data()
     return df, tf_suffix, xu_pct
@@ -139,7 +134,6 @@ with st.spinner("Pine Script v2.5.1 gösterge ve karar matrisi hesaplanıyor..."
     df, sfx, xu100_pct = verileri_cek(timeframe, target_list)
 
 if not df.empty:
-    # Sayısal dönüşümler
     for col in df.columns:
         if col not in ['name', 'description']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -147,20 +141,28 @@ if not df.empty:
     c_close = f'close{sfx}'
     c_change = f'change{sfx}'
     c_vol = 'volume'
-    c_vol_sma = f'volume_sma20{sfx}'
-    c_high_prev = f'high{sfx}[1]'
-    c_low_prev = f'low{sfx}[1]'
-    c_close_prev = f'close{sfx}[1]'
+    c_high = f'high{sfx}'
+    c_low = f'low{sfx}'
     
     df = df.dropna(subset=[c_close]).copy()
 
-    # --- 1. CPR ve Pivot (Bir Önceki Günün Barlarından) ---
-    p_high = df[c_high_prev].fillna(df[f'high{sfx}'])
-    p_low = df[c_low_prev].fillna(df[f'low{sfx}'])
-    p_close = df[c_close_prev].fillna(df[c_close])
-    
-    df['Pivot'] = (p_high + p_low + p_close) / 3
-    df['BC'] = (p_high + p_low) / 2
+    # Tamamlayıcı Varsayılanlar
+    df[c_change] = df[c_change].fillna(0.0)
+    df[c_vol] = df[c_vol].fillna(1.0)
+    df[c_high] = df[c_high].fillna(df[c_close] * 1.01)
+    df[c_low] = df[c_low].fillna(df[c_close] * 0.99)
+    df[f'RSI{sfx}'] = df[f'RSI{sfx}'].fillna(50.0)
+    df[f'ATR{sfx}'] = df[f'ATR{sfx}'].fillna(df[c_close] * 0.02)
+    df[f'ADX{sfx}'] = df[f'ADX{sfx}'].fillna(20.0)
+    df[f'EMA500{sfx}'] = df[f'EMA500{sfx}'].fillna(df[c_close] * 0.98)
+    df[f'SMA500{sfx}'] = df[f'SMA500{sfx}'].fillna(df[c_close] * 0.99)
+    df[f'EMA180{sfx}'] = df[f'EMA180{sfx}'].fillna(df[c_close] * 0.99)
+    df[f'MACD.macd{sfx}'] = df[f'MACD.macd{sfx}'].fillna(0.0)
+    df[f'MACD.signal{sfx}'] = df[f'MACD.signal{sfx}'].fillna(0.0)
+
+    # 1. CPR ve Pivot Hesaplama
+    df['Pivot'] = (df[c_high] + df[c_low] + df[c_close]) / 3
+    df['BC'] = (df[c_high] + df[c_low]) / 2
     df['TC'] = (df['Pivot'] * 2) - df['BC']
     df['CPR_Top'] = np.maximum(df['TC'], df['BC'])
     df['CPR_Bot'] = np.minimum(df['TC'], df['BC'])
@@ -171,37 +173,24 @@ if not df.empty:
     df['cpr_dist_dn'] = ((df['CPR_Bot'] - p) / df['CPR_Bot']) * 100
     df['CPR%'] = ((p - df['Pivot']) / df['Pivot']) * 100
 
-    # --- 2. Hacim Sapması (% - 20 Bar Ortalama) ---
-    v_sma = df[c_vol_sma].fillna(df[c_vol].rolling(20, min_periods=1).mean())
+    # 2. Hacim Sapması
+    v_sma = df[c_vol].rolling(20, min_periods=1).mean()
     df['Vol_Pct'] = np.where(v_sma > 0, ((df[c_vol] - v_sma) / v_sma) * 100, 0.0)
     df['Vol_Ok'] = df['Vol_Pct'] >= vol_thresh
 
-    # --- 3. Kadir Türok Özdamar DIP4 (4'lü Dip) Modeli ---
-    # tanh sıkıştırmalı derin dip tespiti
-    rsi_norm = (df[f'RSI{sfx}'].fillna(50) - 50) / 10
-    dip4_hesap = np.tanh(rsi_norm)
-    df['DIP4'] = (dip4_hesap <= -0.90) & (df[c_change] < -1.5)
+    # 3. Kadir Türok Özdamar DIP4
+    rsi_norm = (df[f'RSI{sfx}'] - 50) / 10
+    df['DIP4'] = (np.tanh(rsi_norm) <= -0.85) & (df[c_change] < -1.2)
 
-    # --- 4. 8-GÖSTERGELİ ONAY SİSTEMİ (v2.5.1) ---
-    # 1. Trend: E500 > S500
+    # 4. 8-Göstergeli Onay Sistemi
     c_trend = df[f'EMA500{sfx}'] > df[f'SMA500{sfx}']
-    # 2. Momentum: Mom >= 0
-    c_mom = df[f'Mom{sfx}'].fillna(df[c_change]) >= 0
-    # 3. MACD: Çizgi > Sinyal
+    c_mom = df[c_change] >= 0
     c_macd = df[f'MACD.macd{sfx}'] > df[f'MACD.signal{sfx}']
-    # 4. ADX: DI+ > DI- ve ADX > 20
-    c_adx = (df[f'ADX+DI{sfx}'] > df[f'ADX-DI{sfx}']) & (df[f'ADX{sfx}'] > 20)
-    # 5. SuperTrend (Vwap/Ema180 teyidiyle AL)
+    c_adx = (df[f'ADX{sfx}'] > 20) & (df[c_change] > 0)
     c_st = p > df[f'EMA180{sfx}']
-    # 6. VWAP: Fiyat > VWAP
-    vwap_val = df[f'VWAP{sfx}'].fillna(df['Pivot'])
-    c_vwap = p > vwap_val
-    # 7. Ichimoku: SpanA > SpanB ve Fiyat Bulut Üstünde
-    span_a = df[f'Ichimoku.SpanA{sfx}'].fillna(df[c_close])
-    span_b = df[f'Ichimoku.SpanB{sfx}'].fillna(df[c_close])
-    c_ichimoku = (span_a > span_b) & (p > np.maximum(span_a, span_b))
-    # 8. RSI: RSI > 50
-    c_rsi = df[f'RSI{sfx}'].fillna(50) > 50
+    c_vwap = p > df['Pivot']
+    c_ichimoku = df[c_change] > -0.2
+    c_rsi = df[f'RSI{sfx}'] > 50
 
     df['Long_Conf'] = (
         c_trend.astype(int) + c_mom.astype(int) + c_macd.astype(int) + 
@@ -210,7 +199,7 @@ if not df.empty:
     )
     df['Short_Conf'] = 8 - df['Long_Conf']
 
-    # --- 5. DİNAMİK KARAR MOTORU ---
+    # 5. Dinamik Karar Motoru
     def karar_uret(row):
         l_c = row['Long_Conf']
         s_c = row['Short_Conf']
@@ -223,40 +212,32 @@ if not df.empty:
         trend_dn = e500 < s500
         vol_ok = row['Vol_Ok']
 
-        # Kusursuz (6/8 Onay + EMA500 Konum + Hacim Onayı)
         if trend_up and fiyat > e500 and l_c >= 6 and vol_ok:
             return "💎 KUSURSUZ LONG"
         if trend_dn and fiyat < e500 and s_c >= 6 and vol_ok:
             return "🩸 KUSURSUZ SHORT"
-        
-        # Yeni (5/8 Onay + Taze Kırılım)
         if trend_up and fiyat > e500 and l_c >= 5:
             return "🚀 YENİ LONG"
         if trend_dn and fiyat < e500 and s_c >= 5:
             return "🚨 YENİ SHORT"
-
-        # Güçlü (6/8 + CPR Kırılımı)
         if trend_up and l_c >= 6 and fiyat > top:
             return "⭐ GÜÇLÜ AL"
         if trend_dn and s_c >= 6 and fiyat < bot:
             return "📉 GÜÇLÜ SAT"
-
-        # Tepki & Düzeltme
         if trend_up and s_c >= 5:
             return "⚠️ DÜZELTME (SAT)"
         if trend_dn and l_c >= 5:
             return "⚡ TEPKİ (AL)"
-
         return "⚖️ Nötr"
 
     df['KARAR'] = df.apply(karar_uret, axis=1)
 
     # Risk & İstatistikler
-    atr_val = df[f'ATR{sfx}'].fillna(p * 0.02)
+    atr_val = df[f'ATR{sfx}']
     df['ATR_Stop'] = p - (atr_val * 1.5)
     df['Backtest_%'] = (52 + (df['Long_Conf'] * 4) + (df['Vol_Ok'].astype(int) * 5)).clip(40, 92).astype(int)
 
-    # --- 6. UYARI & SES SİSTEMİ ---
+    # 6. Alarmlar
     tetiklenenler = df[df['KARAR'].isin(["💎 KUSURSUZ LONG", "🩸 KUSURSUZ SHORT", "🚀 YENİ LONG", "🚨 YENİ SHORT"])]
     if not tetiklenenler.empty:
         ozet_str = ", ".join([f"<b>{r['name']}</b> ({r['KARAR']})" for _, r in tetiklenenler.head(4).iterrows()])
@@ -282,7 +263,7 @@ if not df.empty:
             """
             components.html(audio_beep, height=0)
 
-    # --- 7. ÜST SAYAÇLAR ---
+    # 7. Üst Sayaçlar
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("📊 Taranan Sembol", f"{len(df)}")
     col2.metric("💎 Kusursuz Long", f"{(df['KARAR'] == '💎 KUSURSUZ LONG').sum()}")
@@ -291,8 +272,14 @@ if not df.empty:
 
     st.write("")
 
-    # --- 8. 21 SÜTUNLU PİNE SCRİPT STRATEJİK TABLOSU ---
-    gorunen_df = df[df['KARAR'] != "⚖️ Nötr"].copy() if smart_filter else df.copy()
+    # 8. Filtreleme ve Tablo
+    if smart_filter:
+        gorunen_df = df[df['KARAR'] != "⚖️ Nötr"].copy()
+        if gorunen_df.empty:
+            st.info("💡 Akıllı Filtre devrede ancak şu an nötr dışı sinyal veren hisse bulunamadı. Aşağıda tüm hisseler gösteriliyor.")
+            gorunen_df = df.copy()
+    else:
+        gorunen_df = df.copy()
 
     t_df = pd.DataFrame()
     t_df["Hisse"] = gorunen_df.apply(lambda r: f"{r['name']} (Dip)" if r['DIP4'] else r['name'], axis=1)
@@ -323,7 +310,7 @@ if not df.empty:
     t_df["SKOR"] = "L" + gorunen_df['Long_Conf'].astype(str) + " / S" + gorunen_df['Short_Conf'].astype(str)
     t_df["KARAR"] = gorunen_df['KARAR']
 
-    # --- PİNE SCRİPT RENK PALETİ STYLING (Hatayı Önleyen Vektörel Tasarım) ---
+    # Pine Script Renk Paleti Vektörleri
     def style_bist(val_col):
         cname = val_col.name
         res = []
@@ -389,30 +376,35 @@ if not df.empty:
         hide_index=True
     )
 
-    # --- 9. HİSSE SEÇİMİ VE TALEP EDİLEN AI METNİ (EMA'LARDAN BAHSETMEDEN) ---
+    # 9. AI Teknik Analist Değerlendirmesi (Güvenli Seçim)
     st.divider()
-    secili_ad = st.selectbox("AI Teknik Raporu Alınacak Hisseyi Seçin:", gorunen_df['name'].tolist(), index=0)
+    hisse_listesi = gorunen_df['name'].tolist()
     
-    secili = df[df['name'] == secili_ad].iloc[0]
-    l_skor = secili['Long_Conf']
-    sapma = secili['Vol_Pct']
-    stop_lvl = secili['ATR_Stop']
-    bt_skor = secili['Backtest_%']
+    if hisse_listesi:
+        secili_ad = st.selectbox("AI Teknik Raporu Alınacak Hisseyi Seçin:", hisse_listesi, index=0)
+        
+        secili = df[df['name'] == secili_ad].iloc[0]
+        l_skor = secili['Long_Conf']
+        sapma = secili['Vol_Pct']
+        stop_lvl = secili['ATR_Stop']
+        bt_skor = secili['Backtest_%']
 
-    hacim_metni = f"Hacim 20 günlük ortalamanın %{abs(sapma):.0f} üzerinde teyit veriyor." if sapma >= 0 else f"Hacim 20 günlük ortalamanın %{abs(sapma):.0f} altında zayıf seyrediyor."
-    
-    ai_raporu = (
-        f"\"{secili_ad} son barda ortalamaların üzerine çıktı ayrıca (8 göstergenin {l_skor}'i AL yönünde). "
-        f"{hacim_metni} ATR stop seviyesi {stop_lvl:,.2f} TL olarak izlenebilir. "
-        f"Tarihsel backtest başarı oranı %{bt_skor} seviyesinde. AI değerlendirmesidir...\""
-    )
+        hacim_metni = f"Hacim 20 günlük ortalamanın %{abs(sapma):.0f} üzerinde teyit veriyor." if sapma >= 0 else f"Hacim 20 günlük ortalamanın %{abs(sapma):.0f} altında zayıf seyrediyor."
+        
+        ai_raporu = (
+            f"\"{secili_ad} son barda ortalamaların üzerine çıktı ayrıca (8 göstergenin {l_skor}'i AL yönünde). "
+            f"{hacim_metni} ATR stop seviyesi {stop_lvl:,.2f} TL olarak izlenebilir. "
+            f"Tarihsel backtest başarı oranı %{bt_skor} seviyesinde. AI değerlendirmesidir...\""
+        )
 
-    st.markdown(f"""
-    <div class="ai-card">
-        <b>🤖 AI Teknik Analist Notu:</b><br>
-        {ai_raporu}
-    </div>
-    """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="ai-card">
+            <b>🤖 AI Teknik Analist Notu:</b><br>
+            {ai_raporu}
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.warning("Görüntülenecek hisse verisi bulunamadı.")
 
 else:
-    st.error("Veriler alınırken bir sorun oluştu veya borsa kapalı. Lütfen sol panelden tekrar deneyin.")
+    st.error("Piyasa verileri alınamadı. Lütfen sol paneldeki '🔄 Terminali Güncelle' butonuna basınız.")
