@@ -55,7 +55,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ Çoklu Periyot BIST Tarayıcı ve TP/Stop Paneli (CC Scanner)")
-st.caption("Doğrulanmış 4S (EMA 15/63 & EMA 3 Stop) ve 1S (EMA 45/189 & EMA 9 Stop) Kesişim Kuralları.")
+st.caption("BİST Tüm Hisseler Canlı Tarama Motoru, Taze Sinyaller, Bar Yaşı ve TP/Stop Paneli.")
 
 # --- 1. Yan Panel Ayarları ---
 with st.sidebar:
@@ -63,16 +63,15 @@ with st.sidebar:
     
     taramaPeriyot = st.selectbox(
         "Taranacak Periyot:",
-        options=["240", "60", "15", "5", "1", "D"],
+        options=["1", "5", "60", "240", "D"],
         format_func=lambda x: {
-            "240": "⏰ 4S (240dk - EMA 15/63)",
-            "60": "⏱️ 1S (60dk - EMA 45/189)",
-            "15": "⚡ 15dk",
-            "5": "🔥 5dk",
-            "1": "⚡ 1dk",
-            "D": "📅 Günlük (D)"
+            "1": "1 dakika",
+            "5": "5 dakika",
+            "60": "1 saat",
+            "240": "4 saat",
+            "D": "Günlük"
         }[x],
-        index=0
+        index=3
     )
 
     tazeBarSiniri = st.number_input(
@@ -121,10 +120,10 @@ with st.sidebar:
     tara_butonu = st.button("🔄 Terminali Güncelle", type="primary", use_container_width=True)
 
 def f_get_tf_label(tf):
-    labels = {"1": "1dk", "5": "5dk", "60": "1S", "240": "4S", "D": "Günlük"}
+    labels = {"1": "1 dakika", "5": "5 dakika", "60": "1 saat", "240": "4 saat", "D": "Günlük"}
     return labels.get(tf, tf)
 
-# --- 2. Veri Çekme Motoru ---
+# --- 2. Veri Çekme Motoru (Tüm BİST Hisselerini Kapsayan Limit) ---
 @st.cache_data(ttl=25)
 def verileri_cek(tf_b, semboller=None):
     sfx = "" if tf_b == "D" else f"|{tf_b}"
@@ -132,19 +131,17 @@ def verileri_cek(tf_b, semboller=None):
     cols = [
         'name', 'description', 'volume', 'change', 'close', 'close[1]',
         f'close{sfx}', f'high{sfx}', f'low{sfx}', f'ATR{sfx}',
-        f'EMA3{sfx}', f'EMA9{sfx}', f'EMA15{sfx}', f'EMA45{sfx}', f'EMA63{sfx}', f'EMA189{sfx}', f'EMA500{sfx}',
-        # Günlük 8'li Fibonacci Kolonları
-        'EMA5', 'EMA20', 'EMA50', 'EMA100', 'EMA200',
-        f'Perf.W'
+        f'EMA3{sfx}', f'EMA9{sfx}', f'EMA12{sfx}', f'EMA15{sfx}', f'EMA45{sfx}', f'EMA63{sfx}', f'EMA189{sfx}', f'EMA500{sfx}',
+        'EMA5', 'EMA20', 'EMA50', 'EMA100', 'EMA200'
     ]
 
-    all_cols = list(dict.fromkeys(cols))
+    all_cols = list(dict.fromkeys(['name', 'description', 'volume', 'change'] + cols))
 
     q = Query().set_markets('turkey').select(*all_cols).order_by('volume', ascending=False)
     if semboller and len(semboller) > 0:
         q = q.where(Column('name').isin(semboller))
     else:
-        q = q.limit(350)
+        q = q.limit(600)  # Tüm BİST hisselerini eksiksiz taramak için sınır yükseltildi
 
     _, df = q.get_scanner_data()
     return df, sfx
@@ -175,7 +172,7 @@ if not df.empty:
     atr_col = f'ATR{sfx_b}'
     df['atr'] = df[atr_col].fillna(c * 0.02) if atr_col in df.columns else c * 0.02
 
-    # --- 3. Günlük Fibonacci Boğa Dizilimi (G🔥 Ateşi) ---
+    # --- 3. Boğa Ateşi Kontrolü ---
     c_d = df.get('close', c)
     e5_d = df.get('EMA5', c_d * 0.99)
     e20_d = df.get('EMA20', c_d * 0.98)
@@ -184,7 +181,7 @@ if not df.empty:
     e200_d = df.get('EMA200', c_d * 0.95)
     df['hasFire'] = (c_d > e5_d) & (e5_d > e20_d) & (e20_d > e50_d) & (e50_d > e100_d) & (e100_d > e200_d)
 
-    # --- 4. İstediğiniz Kural Setine Göre Yön ve Stop Hesaplayıcı ---
+    # --- 4. Yön ve Stop Hesaplayıcı ---
     def hesapla_yon_ve_stop(d_in):
         fiyat = d_in.get(f'close{sfx_b}', c)
         if isinstance(fiyat, pd.DataFrame): fiyat = fiyat.iloc[:, 0]
@@ -198,7 +195,6 @@ if not df.empty:
             return fiyat * 0.98
 
         if taramaPeriyot == "240":
-            # 4S: EMA15 > EMA63 -> Güçlü Al | Stop = EMA3
             e15 = get_e(15)
             e63 = get_e(63)
             e3 = get_e(3)
@@ -207,7 +203,6 @@ if not df.empty:
             fast_m = e15
             slow_m = e63
         elif taramaPeriyot == "60":
-            # 1S: EMA45 > EMA189 -> Güçlü Al | Stop = EMA9
             e45 = get_e(45)
             e189 = get_e(189)
             e9 = get_e(9)
@@ -260,19 +255,17 @@ if not df.empty:
         0,
         np.where(
             makas_oran < 0.5,
-            np.clip((makas_oran * 4).astype(int) + 1, 1, 3),  # Taze kesişim (1-3 bar)
-            np.clip((makas_oran * 3.0 + perf_w * 0.3).astype(int) + 2, 4, 35) # Oturan trend
+            np.clip((makas_oran * 4).astype(int) + 1, 1, 3),
+            np.clip((makas_oran * 3.0 + perf_w * 0.3).astype(int) + 2, 4, 35)
         )
     )
 
-    # Kilitli Giriş Fiyatı
     df['entryP'] = np.where(
         df['sigType'] == 1,
         (c - (df['bAgo'] * (df['atr'] * 0.22))).round(2),
         np.where(df['sigType'] == -1, (c + (df['bAgo'] * (df['atr'] * 0.22))).round(2), c)
     )
 
-    # ATR Hedefleri
     df['tp1'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult1 * df['atr']), np.nan)
     df['tp2'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult2 * df['atr']), np.nan)
     df['tp3'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult3 * df['atr']), np.nan)
@@ -285,7 +278,6 @@ if not df.empty:
     df['hit2'] = (df['sigType'] == 1) & (high_ref >= df['tp2'])
     df['hit3'] = (df['sigType'] == 1) & (high_ref >= df['tp3'])
 
-    # Sinyal Sınıflandırması
     def sinyal_belirle(r):
         sig = r['sigType']
         b_ago = r['bAgo']
@@ -370,7 +362,6 @@ if not df.empty:
             h3 = row['hit3']
             b_ago = int(row['bAgo'])
 
-            # 2 Basamaklı Kesin Format
             chg_sign = "+" if p_chg >= 0 else ""
             price_str = f"{p_close:,.2f} ({chg_sign}{p_chg:.2f}%)"
             entry_str = f"{e_p:,.2f} ({b_ago}b)"
@@ -408,7 +399,6 @@ if not df.empty:
 
         t_df = pd.DataFrame(t_rows)
 
-        # Renk Stili Eşleştirmesi
         def style_cc(row):
             styles = [''] * len(row)
             idx_sym = t_df.columns.get_loc("Sembol")
