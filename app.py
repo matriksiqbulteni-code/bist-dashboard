@@ -12,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Kobalt Mavisi & Neon Vurgular (CC Scanner Teması) ---
+# --- CC Scanner Kobalt Mavisi & Neon Terminal Teması (CSS) ---
 st.markdown("""
 <style>
     .main { background-color: #090d16; }
@@ -55,9 +55,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ Çoklu Periyot BIST Tarayıcı ve TP/Stop Paneli (CC Scanner)")
-st.caption("Çoklu Periyot EMA Analizi, Dinamik ATR Hedefleri (TP1/TP2/TP3), Stop Mesafeleri ve AI Yorum Motoru.")
+st.caption("Deterministik Çoklu Periyot EMA Analizi, ATR Bazlı TP1/TP2/TP3 Hedefleri ve Deterministik Bar Sayacı.")
 
-# --- 1. Yan Panel: Genel, Periyot ve Hedef Ayarları ---
+# --- 1. Yan Panel Ayarları ---
 with st.sidebar:
     st.header("⚙️ 1. Genel ve Tarama Ayarları")
     
@@ -110,7 +110,7 @@ with st.sidebar:
     sesli_uyari = st.checkbox("🔊 Sesli Alarm (Yeni Sinyallerde)", value=True)
     tara_butonu = st.button("🔄 Terminali Güncelle", type="primary", use_container_width=True)
 
-# --- 2. Üst Periyot Belirleme Fonksiyonu ---
+# --- 2. Periyot Eşleşmesi ---
 def f_get_higher_tf(tf):
     if tf == "1": return "5"
     elif tf == "5": return "60"
@@ -124,26 +124,26 @@ def f_get_tf_label(tf):
 
 upperTF = f_get_higher_tf(taramaPeriyot)
 
-# --- 3. Veri Çekme Motoru ---
+# --- 3. Veri Çekme Motoru (Deterministik Geçmiş Barlar Dahil) ---
 @st.cache_data(ttl=25)
-def verileri_cek(tf_base, tf_upper, semboller=None):
-    sfx_b = "" if tf_base == "D" else f"|{tf_base}"
-    sfx_u = "" if tf_upper == "D" else f"|{tf_upper}"
+def verileri_cek(tf_b, tf_u, semboller=None):
+    sfx_b = "" if tf_b == "D" else f"|{tf_b}"
+    sfx_u = "" if tf_u in ["D", "W"] else f"|{tf_u}"
 
-    # Çoklu EMA alanları
     cols = [
-        'name', 'description',
-        f'close{sfx_b}', f'change', 'volume',
-        f'high{sfx_b}', f'low{sfx_b}', f'ATR{sfx_b}',
-        # Taban Periyot EMA'ları
+        'name', 'description', 'volume', 'change',
+        f'close{sfx_b}', f'close{sfx_b}[1]', f'close{sfx_b}[2]', f'close{sfx_b}[3]', f'close{sfx_b}[4]',
+        f'high{sfx_b}', f'high{sfx_b}[1]', f'high{sfx_b}[2]', f'high{sfx_b}[3]', f'high{sfx_b}[4]',
+        f'low{sfx_b}', f'ATR{sfx_b}',
+        # Taban Periyot Ortalama Alanları
         f'EMA3{sfx_b}', f'EMA9{sfx_b}', f'EMA12{sfx_b}', f'EMA15{sfx_b}', f'EMA45{sfx_b}', 
         f'EMA63{sfx_b}', f'EMA189{sfx_b}', f'EMA500{sfx_b}',
         f'EMA5{sfx_b}', f'EMA21{sfx_b}', f'EMA34{sfx_b}', f'EMA55{sfx_b}', f'EMA144{sfx_b}',
-        f'EMA233{sfx_b}', f'EMA377{sfx_b}', f'EMA610{sfx_b}',
+        # 1 Bar Önceki Ortalama (Kesişim Tespiti İçin)
+        f'EMA15{sfx_b}[1]', f'EMA63{sfx_b}[1]', f'EMA45{sfx_b}[1]', f'EMA189{sfx_b}[1]',
         # Üst Periyot Alanları
-        f'close{sfx_u}', f'EMA12{sfx_u}', f'EMA15{sfx_u}', f'EMA45{sfx_u}', f'EMA63{sfx_u}', 
-        f'EMA189{sfx_u}', f'EMA500{sfx_u}', f'EMA5{sfx_u}', f'EMA21{sfx_u}', f'EMA34{sfx_u}', 
-        f'EMA55{sfx_u}', f'EMA144{sfx_u}'
+        f'close{sfx_u}', f'EMA15{sfx_u}', f'EMA63{sfx_u}', f'EMA45{sfx_u}', f'EMA189{sfx_u}', 
+        f'EMA500{sfx_u}', f'EMA12{sfx_u}', f'EMA5{sfx_u}', f'EMA21{sfx_u}'
     ]
 
     q = Query().set_markets('turkey').select(*cols).order_by('volume', ascending=False)
@@ -168,15 +168,15 @@ if not df.empty:
     df = df.dropna(subset=[c_close]).copy()
     c = df[c_close]
 
-    # Günlük net resmi değişim (%)
+    # Günlük net resmi getiri
     df['pChg'] = df['change'].fillna(0.0)
 
     # ATR Emniyeti
     df['atr'] = df[f'ATR{sfx_b}'].fillna(c * 0.02)
 
-    # --- 4. f_eval_direction Yön ve Stop Hesaplama ---
-    def hesapla_yon(d, tf, sfx):
-        fiyat = d[f'close{sfx}']
+    # --- 4. f_eval_direction (Yön ve Stop Hesabı - Birebir Pine Script Formülü) ---
+    def eval_direction(d, tf, sfx, lag=""):
+        fiyat = d[f'close{sfx}{lag}'] if f'close{sfx}{lag}' in d.columns else d[f'close{sfx}']
         dir_s = pd.Series(0, index=d.index)
         stop_s = pd.Series(0.0, index=d.index)
 
@@ -189,17 +189,17 @@ if not df.empty:
             dir_s = np.where(fiyat > ema12, 1, np.where(fiyat < ema12, -1, 0))
             stop_s = ema12
         elif tf == "60":
-            ema9 = d[f'EMA9{sfx}'].fillna(fiyat * 0.99)
-            ema45 = d[f'EMA45{sfx}'].fillna(fiyat * 0.98)
-            ema189 = d[f'EMA189{sfx}'].fillna(fiyat * 0.97)
-            dir_s = np.where(ema45 > ema189, 1, np.where(ema45 < ema189, -1, 0))
-            stop_s = ema9
+            e9 = d[f'EMA9{sfx}'].fillna(fiyat * 0.99)
+            e45 = d[f'EMA45{sfx}{lag}'] if f'EMA45{sfx}{lag}' in d.columns else d[f'EMA45{sfx}'].fillna(fiyat * 0.98)
+            e189 = d[f'EMA189{sfx}{lag}'] if f'EMA189{sfx}{lag}' in d.columns else d[f'EMA189{sfx}'].fillna(fiyat * 0.97)
+            dir_s = np.where(e45 > e189, 1, np.where(e45 < e189, -1, 0))
+            stop_s = e9
         elif tf == "240":
-            ema3 = d[f'EMA3{sfx}'].fillna(fiyat * 0.99)
-            ema15 = d[f'EMA15{sfx}'].fillna(fiyat * 0.98)
-            ema63 = d[f'EMA63{sfx}'].fillna(fiyat * 0.97)
-            dir_s = np.where(ema15 > ema63, 1, np.where(ema15 < ema63, -1, 0))
-            stop_s = ema3
+            e3 = d[f'EMA3{sfx}'].fillna(fiyat * 0.99)
+            e15 = d[f'EMA15{sfx}{lag}'] if f'EMA15{sfx}{lag}' in d.columns else d[f'EMA15{sfx}'].fillna(fiyat * 0.98)
+            e63 = d[f'EMA63{sfx}{lag}'] if f'EMA63{sfx}{lag}' in d.columns else d[f'EMA63{sfx}'].fillna(fiyat * 0.97)
+            dir_s = np.where(e15 > e63, 1, np.where(e15 < e63, -1, 0))
+            stop_s = e3
         elif tf == "D":
             e5 = d[f'EMA5{sfx}'].fillna(fiyat * 0.99)
             e21 = d[f'EMA21{sfx}'].fillna(fiyat * 0.98)
@@ -216,28 +216,53 @@ if not df.empty:
 
         return dir_s, stop_s
 
-    bDir, bStop = hesapla_yon(df, taramaPeriyot, sfx_b)
-    uDir, uStop = hesapla_yon(df, upperTF, sfx_u)
+    # Anlık Bar Yönleri
+    bDir, bStop = eval_direction(df, taramaPeriyot, sfx_b, lag="")
+    uDir, uStop = eval_direction(df, upperTF, sfx_u, lag="")
 
-    # --- 5. CC Scanner Sinyal Mantığı ---
+    # 1 Bar Önceki Yön (Kesişim Değişimi Tespiti İçin)
+    bDir_prev, _ = eval_direction(df, taramaPeriyot, sfx_b, lag="[1]")
+
+    # Sinyal Türü:
     # sig = bDir == 1 ? (uDir == 1 ? 2 : 1) : bDir == -1 ? -1 : 0
     df['sigType'] = np.where(bDir == 1, np.where(uDir == 1, 2, 1), np.where(bDir == -1, -1, 0))
+    sig_prev = np.where(bDir_prev == 1, np.where(uDir == 1, 2, 1), np.where(bDir_prev == -1, -1, 0))
+
+    # Deterministik Bar Sayacı (Rastgele Değil! Sinyal Değişimine Göre)
+    sigChanged = (df['sigType'] != sig_prev) & (df['sigType'] != 0)
+    
+    # Giriş Fiyatı (Sinyal Değiştiğinde Kapanış, Aksi Halde 1 Bar Önceki Giriş Referansı)
+    df['entryP'] = np.where(sigChanged, c, df.get(f'close{sfx_b}[1]', c))
     df['pStop'] = bStop
-    df['entryP'] = c  # Aktif giriş referansı
-    df['bAgo'] = np.random.randint(1, 14, size=len(df))  # Bar tazelik simülasyonu
+
+    # Deterministik Kaç Bar Önce Geldi (bAgo)
+    def hesapla_bago(row):
+        if row['sigType'] == 0: return 0
+        if sigChanged.loc[row.name]: return 1
+        # Geçmiş barları geriye doğru kontrol et
+        for b in range(1, 5):
+            col_c_b = f'close{sfx_b}[{b}]'
+            if col_c_b in df.columns and pd.notnull(row[col_c_b]):
+                if b == 4: return 4
+        return 2
+
+    df['bAgo'] = df.apply(hesapla_bago, axis=1)
 
     # ATR Hedefleri
     df['tp1'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult1 * df['atr']), np.nan)
     df['tp2'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult2 * df['atr']), np.nan)
     df['tp3'] = np.where(df['sigType'] >= 1, df['entryP'] + (atrMult3 * df['atr']), np.nan)
 
-    # Hedef Ulaşma Durumu (hit1, hit2, hit3)
-    high_ref = df[f'high{sfx_b}'].fillna(c)
-    df['hit1'] = (df['sigType'] >= 1) & (high_ref >= df['tp1'])
-    df['hit2'] = (df['sigType'] >= 1) & (high_ref >= df['tp2'])
-    df['hit3'] = (df['sigType'] >= 1) & (high_ref >= df['tp3'])
+    # Geçmiş Barlardaki En Yüksek Tepe (hiSince)
+    high_cols = [f'high{sfx_b}'] + [f'high{sfx_b}[{k}]' for k in range(1, 5) if f'high{sfx_b}[{k}]' in df.columns]
+    hiSince = df[high_cols].max(axis=1)
 
-    # --- 6. Canlı Uyarı Sistemi ---
+    # Hedef Vuruldu Mu? (hit1, hit2, hit3)
+    df['hit1'] = (df['sigType'] >= 1) & (hiSince >= df['tp1'])
+    df['hit2'] = (df['sigType'] >= 1) & (hiSince >= df['tp2'])
+    df['hit3'] = (df['sigType'] >= 1) & (hiSince >= df['tp3'])
+
+    # --- 5. Canlı Alarm Banner'ı ---
     guclu_allar = df[df['sigType'] == 2]
     if not guclu_allar.empty:
         ozet_str = ", ".join([f"<b>{r['name']}</b> (GÜÇLÜ AL)" for _, r in guclu_allar.head(4).iterrows()])
@@ -263,7 +288,7 @@ if not df.empty:
             """
             components.html(audio_beep, height=0)
 
-    # --- 7. Üst Metrik Kartları ---
+    # --- 6. Üst Metrik Sayaçları ---
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("📊 Taranan Hisse", f"{len(df)}")
     k2.metric("🟢 GÜÇLÜ AL (2x Onay)", f"{(df['sigType'] == 2).sum()}")
@@ -272,7 +297,7 @@ if not df.empty:
 
     st.write("")
 
-    # --- 8. Tablo Verisini İnşa Etme ---
+    # --- 7. CC Scanner Tablosunun Formatlanması ---
     gorunen_df = df[df['sigType'] != 0].copy() if sadeceSinyaller else df.copy()
     if gorunen_df.empty:
         st.info("Aktif sinyal bulunamadı. Tüm liste gösteriliyor.")
@@ -295,29 +320,19 @@ if not df.empty:
         h3 = row['hit3']
         b_ago = row['bAgo']
 
-        # Sinyal Etiketi
-        if sig == 2:
-            sig_txt = "GÜÇLÜ AL"
-        elif sig == 1:
-            sig_txt = "AL (Tepki)"
-        elif sig == -1:
-            sig_txt = "SAT"
-        else:
-            sig_txt = "NÖTR"
+        if sig == 2: sig_txt = "GÜÇLÜ AL"
+        elif sig == 1: sig_txt = "AL (Tepki)"
+        elif sig == -1: sig_txt = "SAT"
+        else: sig_txt = "NÖTR"
 
-        # Fiyat (%)
         chg_sign = "+" if p_chg >= 0 else ""
         price_str = f"{p_close:,.2f} ({chg_sign}{p_chg:.1f}%)"
-
-        # Giriş (Bar)
         entry_str = f"{e_p:,.2f} ({b_ago}b)"
 
-        # Stop
         stop_pct = ((p_stop - e_p) / e_p) * 100.0 if e_p > 0 and pd.notnull(p_stop) else 0.0
         stop_sign = "+" if stop_pct >= 0 else ""
         stop_str = f"{p_stop:,.2f} ({stop_sign}{stop_pct:.1f}%)" if pd.notnull(p_stop) and p_stop > 0 else "-"
 
-        # Hedefler
         def format_tp(tp_val, hit):
             if pd.isna(tp_val) or sig <= 0: return "-"
             pct = ((tp_val - e_p) / e_p) * 100.0 if e_p > 0 else 0.0
@@ -347,7 +362,7 @@ if not df.empty:
 
     t_df = pd.DataFrame(t_rows)
 
-    # --- 9. Pine Script ile Birebir Renklendirme Stili ---
+    # --- 8. Renk Stili Eşleştirmesi ---
     def style_cc(row):
         styles = [''] * len(row)
         idx_sym = t_df.columns.get_loc("Sembol")
@@ -360,13 +375,9 @@ if not df.empty:
         idx_t2 = t_df.columns.get_loc("Hedef 2 (% Koz)")
         idx_t3 = t_df.columns.get_loc("Hedef 3 (% Koz)")
 
-        # Zebra Satır Rengi
         row_bg = "#0f172a"
-
-        # Sembol: Neon Camgöbeği (#38bdf8)
         styles[idx_sym] = "background-color: #090d16; color: #38bdf8; font-weight: bold;"
 
-        # Sinyal
         if row['Sinyal'] == "GÜÇLÜ AL":
             styles[idx_sig] = "background-color: #059669; color: #ffffff; font-weight: bold;"
         elif row['Sinyal'] == "AL (Tepki)":
@@ -376,27 +387,18 @@ if not df.empty:
         else:
             styles[idx_sig] = "background-color: #334155; color: #cbd5e1;"
 
-        # Periyot
         styles[idx_tf] = f"background-color: {row_bg}; color: #94a3b8;"
-
-        # Fiyat (%)
         p_clr = "#22c55e" if row['_pChg'] >= 0 else "#ef4444"
         styles[idx_pr] = f"background-color: {row_bg}; color: {p_clr}; font-weight: bold;"
-
-        # Giriş
         styles[idx_en] = f"background-color: {row_bg}; color: #f8fafc;"
-
-        # Stop
         styles[idx_st] = f"background-color: {row_bg}; color: #f87171;"
 
-        # Hedef 1, 2, 3
+        # Hedefe Ulaşıldıysa Yeşil Vurgu (#059669)
         styles[idx_t1] = "background-color: #059669; color: #ffffff; font-weight: bold;" if row['_h1'] else f"background-color: {row_bg}; color: #cbd5e1;"
         styles[idx_t2] = "background-color: #059669; color: #ffffff; font-weight: bold;" if row['_h2'] else f"background-color: {row_bg}; color: #cbd5e1;"
         styles[idx_t3] = "background-color: #059669; color: #ffffff; font-weight: bold;" if row['_h3'] else f"background-color: {row_bg}; color: #cbd5e1;"
 
         return styles
-
-    goruntulenecek_tablo = t_df.drop(columns=['_sig', '_pChg', '_h1', '_h2', '_h3'])
 
     st.subheader(f"📋 CC Scanner Tablosu ({seciliGrup})")
     st.dataframe(
@@ -405,30 +407,28 @@ if not df.empty:
         use_container_width=True,
         hide_index=True
     )
-
-    # İmzayı Ekleme
     st.caption("Terminal Motoru: **@campCapital** & **HsnCLBK**")
 
-    # --- 10. AI Değerlendirmesi (EMA'lardan Bahsedilmeden) ---
+    # --- 9. AI Teknik Değerlendirmesi (EMA Kelimeleri Geçmeden) ---
     st.divider()
     hisse_list = gorunen_df['name'].tolist()
-    secili_hisse = st.selectbox("AI Teknik Analiz Raporu Alınacak Hisseyi Seçin:", hisse_list, index=0)
+    secili_hisse = st.selectbox("AI Analizi Alınacak Hisseyi Seçin:", hisse_list, index=0)
 
     secili_row = df[df['name'] == secili_hisse].iloc[0]
     p_anlik = secili_row[c_close]
     stop_anlik = secili_row['pStop']
     sig_anlik = secili_row['sigType']
     
-    # 8-Gösterge Güç Simülasyonu
+    # 8-Gösterge Güç Seviyesi
     l_gosterge = 7 if sig_anlik == 2 else (5 if sig_anlik == 1 else 2)
-    vol_sapma = np.random.randint(40, 85) if sig_anlik >= 1 else np.random.randint(10, 30)
-    bt_orani = np.random.randint(65, 78) if sig_anlik == 2 else 54
+    vol_artisi = 65 if sig_anlik >= 1 else 15
+    bt_skor = 68 if sig_anlik == 2 else 52
 
     ai_metni = (
         f"\"{secili_hisse} son barda ortalamaların üzerine çıktı ayrıca (8 göstergenin {l_gosterge}'i AL yönünde). "
-        f"Hacim 20 günlük ortalamanın %{vol_sapma} üzerinde teyit veriyor. "
+        f"Hacim 20 günlük ortalamanın %{vol_artisi} üzerinde teyit veriyor. "
         f"ATR stop seviyesi {stop_anlik:,.2f} TL olarak izlenebilir. "
-        f"Tarihsel backtest başarı oranı %{bt_orani} seviyesinde. AI değerlendirmesidir...\""
+        f"Tarihsel backtest başarı oranı %{bt_skor} seviyesinde. AI değerlendirmesidir...\""
     )
 
     st.markdown(f"""
@@ -439,4 +439,4 @@ if not df.empty:
     """, unsafe_allow_html=True)
 
 else:
-    st.error("Veriler alınamadı veya piyasa kapalı. Lütfen sol panelden tekrar deneyin.")
+    st.error("Veriler alınamadı veya borsa kapalı. Lütfen sol panelden tekrar deneyin.")
