@@ -74,7 +74,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Çoklu Periyot BIST Tarayıcı ve Takas/Fon Analiz Paneli")
+st.title("BIST Tarayıcı ve Takas/Fon Analiz Paneli@campCapital")
 st.caption("CC Scanner v6: Dinamik Takas & TEFAS Fon Entegrasyonlu Karar Merkezi.")
 
 # --- 1. Yan Panel Ayarları ---
