@@ -65,7 +65,7 @@ with st.sidebar:
     
     min_volume = st.number_input(
         "Min. Hacim (Milyon ₺):",
-        value=10,
+        value=5,
         min_value=0,
         step=5
     ) * 1_000_000
@@ -73,8 +73,8 @@ with st.sidebar:
     yaklasma_esigi = st.slider(
         "Kesişime Yaklaşma Eşiği (%):",
         min_value=0.1,
-        max_value=2.0,
-        value=0.8,
+        max_value=3.0,
+        value=1.0,
         step=0.1,
         help="EMA 15 ile EMA 63 arasındaki makas bu orandan daha darsa 'Yaklaşan Sinyal' olarak listelenir."
     )
@@ -102,7 +102,7 @@ def veri_getir(tf, min_vol):
             Column(col_vol) >= min_vol
         )
         .order_by(col_vol, ascending=False)
-        .limit(350)
+        .limit(300)
     )
     
     _, df = query.get_scanner_data()
@@ -113,39 +113,53 @@ with st.spinner("Piyasa verileri çekiliyor ve göstergeler hesaplanıyor..."):
     raw_df, col_c, col_ch, col_e15, col_e63, col_e15_p, col_e63_p, col_v = veri_getir(timeframe, min_volume)
 
 if not raw_df.empty:
+    # Sayısal değerleri garantiye al ve eksik (NaN) verileri temizle
+    numeric_cols = [col_c, col_ch, col_e15, col_e63, col_e15_p, col_e63_p, col_v]
+    for col in numeric_cols:
+        if col in raw_df.columns:
+            raw_df[col] = pd.to_numeric(raw_df[col], errors='coerce')
+
+    # Yeterli mum verisi olmayan hisseleri filtre dışı bırak
+    raw_df = raw_df.dropna(subset=[col_e15, col_e63, col_e15_p, col_e63_p, col_c]).copy()
+
+    # 1. Kesişim Sinyalleri (Tip güvenli mantıksal hesaplama)
     raw_df['AL_Kesisim'] = (raw_df[col_e15] > raw_df[col_e63]) & (raw_df[col_e15_p] <= raw_df[col_e63_p])
     raw_df['SAT_Kesisim'] = (raw_df[col_e15] < raw_df[col_e63]) & (raw_df[col_e15_p] >= raw_df[col_e63_p])
+    
+    # 2. Makas Oranı: |EMA15 - EMA63| / EMA63 * 100
     raw_df['Makas_%'] = ((raw_df[col_e15] - raw_df[col_e63]).abs() / raw_df[col_e63]) * 100
     raw_df['Boga_Trendi'] = raw_df[col_e15] > raw_df[col_e63]
 
+    # --- ÜST DASHBOARD KPI KARTLARI ---
     toplam_hisse = len(raw_df)
     al_sayisi = int(raw_df['AL_Kesisim'].sum())
     sat_sayisi = int(raw_df['SAT_Kesisim'].sum())
-    boga_yuzdesi = (raw_df['Boga_Trendi'].sum() / toplam_hisse) * 100
+    boga_yuzdesi = (raw_df['Boga_Trendi'].sum() / toplam_hisse * 100) if toplam_hisse > 0 else 0
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("📊 Taranan Hacimli Hisse", f"{toplam_hisse}")
-    kpi2.metric("🟢 Yeni AL Kesişimi", f"{al_sayisi}", delta="Alış Fırsatı" if al_sayisi > 0 else None)
-    kpi3.metric("🔴 Yeni SAT Kesişimi", f"{sat_sayisi}", delta="-Satış Baskısı" if sat_sayisi > 0 else None, delta_color="inverse")
+    kpi1.metric("📊 Taranan Hisse", f"{toplam_hisse}")
+    kpi2.metric("🟢 Yeni AL Kesişimi", f"{al_sayisi}", delta="Alış Sinyali" if al_sayisi > 0 else None)
+    kpi3.metric("🔴 Yeni SAT Kesişimi", f"{sat_sayisi}", delta="-Satış Sinyali" if sat_sayisi > 0 else None, delta_color="inverse")
     kpi4.metric("⚖️ Piyasa Boğa Oranı", f"%{boga_yuzdesi:.1f}", delta=f"{'Pozitif' if boga_yuzdesi >= 50 else 'Negatif'}")
 
     st.divider()
 
+    # --- ANA PANELLER (SEKMELER) ---
     tab1, tab2, tab3 = st.tabs(["🔥 Canlı Kesişim Tablosu", "🎯 Kesişime Yaklaşanlar (Radar)", "📊 Hacim & Trend Analizi"])
 
     with tab1:
         kesisimler = raw_df[raw_df['AL_Kesisim'] | raw_df['SAT_Kesisim']].copy()
         
         if not kesisimler.empty:
-            kesisimler['Sinyal'] = kesisimler['AL_Kesisim'].apply(lambda x: "🟢 GÜÇLÜ AL (Golden Cross)" if x else "🔴 SAT (Death Cross)")
+            kesisimler['Sinyal'] = kesisimler['AL_Kesisim'].apply(lambda x: "🟢 AL (Yukarı Kesti)" if x else "🔴 SAT (Aşağı Kesti)")
             
             tablo_df = kesisimler[['name', 'description', 'Sinyal', col_c, col_ch, col_e15, col_e63, col_v]].copy()
-            tablo_df.columns = ["Sembol", "Şirket Adı", "Sinyal Türü", "Son Fiyat", "Günlük Değişim %", "EMA 15", "EMA 63", "Hacim (₺)"]
+            tablo_df.columns = ["Sembol", "Şirket Adı", "Sinyal Türü", "Son Fiyat", "Değişim %", "EMA 15", "EMA 63", "Hacim (₺)"]
             
             st.dataframe(
                 tablo_df.style.format({
                     "Son Fiyat": "{:,.2f} ₺",
-                    "Günlük Değişim %": "%{:+.2f}",
+                    "Değişim %": "%{:+.2f}",
                     "EMA 15": "{:,.2f}",
                     "EMA 63": "{:,.2f}",
                     "Hacim (₺)": "{:,.0f}"
@@ -154,7 +168,7 @@ if not raw_df.empty:
                 hide_index=True
             )
         else:
-            st.info("💡 Şu anda seçili periyotta henüz taze kesişim yapmış bir hisse bulunmuyor. Radar sekmesine göz atabilirsiniz.")
+            st.info("💡 Şu anda seçilen periyotta yeni kesişim yapmış hisse bulunmuyor. Kesişime yaklaşan hisseler için yandaki **🎯 Radar** sekmesini kontrol edebilirsiniz.")
 
     with tab2:
         st.markdown(f"**EMA 15 ile EMA 63 arasındaki makasın %{yaklasma_esigi} altına indiği, kesişmek üzere olan hisseler:**")
@@ -178,11 +192,11 @@ if not raw_df.empty:
                 hide_index=True
             )
         else:
-            st.write("Belirtilen eşik dahilinde daralan hisse bulunamadı.")
+            st.write("Eşik dahilinde daralan hisse bulunamadı. Sol panelden 'Kesişime Yaklaşma Eşiği' değerini artırabilirsiniz.")
 
     with tab3:
-        st.subheader("İşlem Hacmi Dağılımı (Top 10)")
-        top_hacim = raw_df.nlargest(10, col_v)[['name', col_v, 'Boga_Trendi']]
+        st.subheader("İşlem Hacmi Dağılımı (İlk 10)")
+        top_hacim = raw_df.nlargest(10, col_v)[['name', col_v, 'Boga_Trendi']].copy()
         top_hacim['Trend'] = top_hacim['Boga_Trendi'].apply(lambda x: "Boğa (EMA15>63)" if x else "Ayı (EMA15<63)")
         
         fig = px.bar(
