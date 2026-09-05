@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 
 # --- Sayfa Genel Yapılandırması ---
 st.set_page_config(
-    page_title="CC Scanner | BİST Tarayıcı ve TP/Stop Paneli",
+    page_title="CC CampCapital| BİST Tarayıcı ve TP/Stop Paneli",
     page_icon="⚡",
     layout="wide"
 )
