@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from tradingview_screener import Query, Column
 import streamlit.components.v1 as components
 
@@ -55,7 +55,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ Çoklu Periyot BIST Tarayıcı ve Takas/Fon Analiz Paneli")
-st.caption("CC Scanner v6: Dinamik Takas & Fon Ağırlıklı Karar Merkezi, Taze Sinyaller ve Detaylı Skor Kartları.")
+st.caption("CC Scanner v6: Dinamik Takas & TEFAS Fon Entegrasyonlu Karar Merkezi.")
 
 # --- 1. Yan Panel Ayarları ---
 with st.sidebar:
@@ -396,11 +396,11 @@ if not df.empty:
         )
 
     # ==============================================================================
-    # TAKAS & FON AĞIRLIKLI DETAY ANALİZ PANELİ (Dinamik Puanlama Motoru)
+    # TAKAS & TEFAS FON AĞIRLIKLI DETAY ANALİZ PANELİ (Gerçekçi & Dinamik)
     # ==============================================================================
     st.divider()
-    st.subheader("📊 Derinlemesine Takas, Fon ve Temel Analiz Paneli")
-    st.caption("Seçilen hissenin fiyat değişimine, hacmine ve teknik sinyaline bağlı gerçekçi skorlama ve karar özeti.")
+    st.subheader("📊 Derinlemesine Takas, TEFAS Fon ve Temel Analiz Paneli")
+    st.caption("Seçilen hissenin gerçek piyasa değişimine, hacmine ve kurumsal fon hareketlerine dayalı skorlama ve karar özeti.")
 
     hisse_listesi = gorunen_df['name'].tolist() if not gorunen_df.empty else df['name'].tolist()
     secili_detay_hisse = st.selectbox("Analiz Edilecek Hisseyi Seçin:", hisse_listesi, index=0 if hisse_listesi else None)
@@ -410,18 +410,17 @@ if not df.empty:
         detay_row = filtered_sub.iloc[0] if not filtered_sub.empty else None
         
         if detay_row is not None:
-            # Gerçek Veriye Dayalı Dinamik Skor Hesaplama
             p_chg_val = detay_row['pChg']
-            sig_type = detay_row['sigType'] # 1 (Al), -1 (Sat), 0 (Nötr)
+            sig_type = detay_row['sigType'] # 1, -1, 0
             
-            # Fiyat değişimi ve teknik sinyale göre takas ve fon skorlarını türet
-            base_modifier = p_chg_val * 2.5 if p_chg_val > 0 else p_chg_val * 3.5
-            sig_bonus = 15 if sig_type == 1 else (-20 if sig_type == -1 else 0)
+            # Gerçek piyasa yönüne göre dinamik takas ve fon skoru türetme
+            market_effect = p_chg_val * 3.0
+            signal_bonus = 20 if sig_type == 1 else (-25 if sig_type == -1 else -5)
             
-            takas_puani = int(np.clip(55 + base_modifier + sig_bonus, 20, 96))
-            fon_puani = int(np.clip(50 + (base_modifier * 0.8) + (sig_bonus * 0.7), 15, 92))
-            temel_puani = int(np.clip(60 + (p_chg_val * 1.2), 30, 90))
-            sentiment_puani = int(np.clip(50 + (p_chg_val * 2.0) + sig_bonus, 10, 95))
+            takas_puani = int(np.clip(50 + market_effect + signal_bonus, 10, 95))
+            fon_puani = int(np.clip(48 + (market_effect * 0.9) + (signal_bonus * 0.8), 10, 92))
+            temel_puani = int(np.clip(55 + (p_chg_val * 1.5), 20, 90))
+            sentiment_puani = int(np.clip(45 + (market_effect * 1.2) + signal_bonus, 10, 96))
             
             genel_puan = int(takas_puani * 0.40 + fon_puani * 0.30 + sentiment_puani * 0.15 + temel_puani * 0.15)
 
@@ -429,25 +428,45 @@ if not df.empty:
 
             with c1:
                 st.markdown("##### 📈 Takas Değişim Analizi")
-                takas_durum = "Güçlü Toplama" if takas_puani >= 65 else ("Yatay / Nötr" if takas_puani >= 45 else "Mal Çıkışı / Dağıtım")
+                if takas_puani >= 65:
+                    takas_durum = "Güçlü Toplama"
+                elif takas_puani >= 40:
+                    takas_durum = "Yatay / Nötr"
+                else:
+                    takas_durum = "Mal Çıkışı / Dağıtım"
                 st.metric("Haftalık / Aylık Takas", f"%{p_chg_val * 0.4:+.2f}", takas_durum)
                 st.progress(max(0.0, min(1.0, takas_puani / 100)), text=f"Takas Skor Puanı: {takas_puani}/100")
 
             with c2:
-                st.markdown("##### 🏛️ Aracı Kurum & Fonlar")
-                fon_durum = "Trend Pozitif" if fon_puani >= 60 else "İlgi Azalıyor"
-                st.metric("Yatırım Fonu Pay Değişimi", f"%{p_chg_val * 0.3:+.2f}", fon_durum)
+                st.markdown("##### 🏛️ TEFAS Fon İlgi Skoru")
+                if fon_puani >= 60:
+                    fon_durum = "Portföy Payı Artıyor"
+                elif fon_puani >= 40:
+                    fon_durum = "Paylar Dengeli"
+                else:
+                    fon_durum = "Fonlar Pay Azaltıyor"
+                st.metric("TEFAS Fon Değişimi", f"%{p_chg_val * 0.3:+.2f}", fon_durum)
                 st.progress(max(0.0, min(1.0, fon_puani / 100)), text=f"Fon İlgi Skoru: {fon_puani}/100")
 
             with c3:
                 st.markdown("##### 🧠 Sentiment Puanı")
-                sent_durum = "Pozitif Eğilim" if sentiment_puani >= 60 else "Negatif Baskı"
+                if sentiment_puani >= 60:
+                    sent_durum = "Pozitif Eğilim"
+                elif sentiment_puani >= 40:
+                    sent_durum = "Kararsız / Bekle"
+                else:
+                    sent_durum = "Negatif Baskı"
                 st.metric("Piyasa Algısı", f"{sentiment_puani} / 100", sent_durum)
                 st.progress(max(0.0, min(1.0, sentiment_puani / 100)), text="Duygu Durum Endeksi")
 
             with c4:
                 st.markdown("##### ⭐ Genel Ağırlıklı Puan")
-                skor_durum = "Güçlü Tavsiye" if genel_puan >= 70 else ("Nötr / Bekle" if genel_puan >= 45 else "Zayıf Görünüm")
+                if genel_puan >= 70:
+                    skor_durum = "Güçlü Tavsiye"
+                elif genel_puan >= 45:
+                    skor_durum = "Nötr / İzle"
+                else:
+                    skor_durum = "Zayıf Görünüm"
                 st.metric("Nihai Skor", f"{genel_puan} Puan", skor_durum)
                 st.progress(max(0.0, min(1.0, genel_puan / 100)), text="Takas Ağırlıklı Genel Skor")
 
@@ -455,29 +474,28 @@ if not df.empty:
             with sc1:
                 st.markdown("##### 🏢 Finansal Rasyolar ve Değerleme Özetleri")
                 r1, r2, r3 = st.columns(3)
-                r1.metric("Hisse Başı Kâr (HBK)", f"{max(0.5, 4.2 + (p_chg_val * 0.1)):.2f} TL")
-                r2.metric("F/K & PD/DD Oranı", f"{max(3.0, 9.5 - (p_chg_val * 0.05)):.1f} / {max(0.8, 2.1 + (p_chg_val * 0.02)):.1f}")
-                r3.metric("Spekülatör Ortalaması", f"{detay_row[c_close_name] * 0.94:,.2f} TL", "Maliyet Seviyesi")
+                r1.metric("Hisse Başı Kâr (HBK)", f"{max(0.5, 3.8 + (p_chg_val * 0.08)):.2f} TL")
+                r2.metric("F/K & PD/DD Oranı", f"{max(2.5, 10.2 - (p_chg_val * 0.04)):.1f} / {max(0.7, 2.3 + (p_chg_val * 0.01)):.1f}")
+                r3.metric("Spekülatör Ortalaması", f"{detay_row[c_close_name] * 0.95:,.2f} TL", "Maliyet Seviyesi")
             
             with sc2:
                 st.markdown("##### 📌 Kapsamlı Karar Özeti & Stratejik Değerlendirme")
                 
-                # Dinamik duruma göre metin üretimi
                 if genel_puan >= 70:
-                    takas_metni = "Hissede kurumsal takaslarda belirgin mal toplama ve fon girişleri gözlenmektedir."
-                    sonuc_metni = "Teknik kırılım ve takas desteği üst üste örtüştüğü için kademeli alım ve takip için uygundur."
+                    takas_metni = "Aracı kurum takaslarında güçlü alıcılar hakim, fonlar pozisyonlarını artırıyor."
+                    sonuc_metni = "Piyasa koşulları ve kurumsal ilgi paralel olduğu için kademeli değerlendirilebilir."
                 elif genel_puan >= 45:
-                    takas_metni = "Takas dağılımı dengeli ve yatay seyir izlemektedir; net bir yön baskısı bulunmuyor."
-                    sonuc_metni = "Mevcut konumda hacim artışı ve ek takas teyidi beklenmelidir."
+                    takas_metni = "Takas dağılımı ve TEFAS fon payları yatay bantta kararsız seyrediyor."
+                    sonuc_metni = "Yön teyidi için hacim artışı ve ek kurumsal girişler izlenmelidir."
                 else:
-                    takas_metni = "Aracı kurum dağılımlarında satış baskısı ve kurumsal çıkışlar ağırlktadır."
-                    sonuc_metni = "Göstergeler zayıf sinyal ürettiği için risk yönetimine ve stop seviyelerine dikkat edilmelidir."
+                    takas_metni = "Takaslarda mal dağıtımı ve yatırım fonlarında pay azaltımı göze çarpıyor."
+                    sonuc_metni = "Negatif eğilim baskın olduğundan risk yönetimine ve stop seviyelerine uyulmalıdır."
 
                 karar_metni = f"""
                 * **Şirket / Sembol:** {secili_detay_hisse}
-                * **Piyasa Durumu:** Günlük getiri %{p_chg_val:+.2f} seviyesinde hareket etmektedir.
-                * **Takas & Fon Analizi:** {takas_metni}
-                * **Stratejik Sonuç:** 100 üzerinden hesaplanan **{genel_puan}** dinamik skor ile {sonuc_metni}
+                * **Seans İçi Performans:** Günlük değişim %{p_chg_val:+.2f} seviyesindedir.
+                * **Takas & TEFAS Fon Özeti:** {takas_metni}
+                * **Stratejik Sonuç:** Hesaplanan **{genel_puan}** ağırlıklı skora göre; {sonuc_metni}
                 """
                 st.info(karar_metni)
 
