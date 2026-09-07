@@ -77,7 +77,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ BIST Tarayıcı ve Takas/Fon Analiz Paneli")
-st.caption("CC Scanner Pro: Dinamik Periyot Kapanışı + ATR(14) + EMA Trend & Sinyal Matrisi")
+st.caption("CC Scanner: Dinamik Periyot Kapanışı + ATR(14) + Sabit EMA Motoru")
+
+# EMA Tanımları
+DAILY_EMAS = [5, 21, 34, 55, 144, 233, 377, 610]
+INTRADAY_EMAS = [3, 9, 12, 15, 45, 63, 189, 500]
 
 # ==============================================================================
 # 1. YAN PANEL (SIDEBAR)
@@ -141,21 +145,23 @@ def f_get_tf_label(tf):
     return labels.get(tf, tf)
 
 # ==============================================================================
-# 2. VERİ ÇEKME MOTORU (TRADINGVIEW API İLE %100 UYUMLU KOLONLAR)
+# 2. VERİ ÇEKME MOTORU
 # ==============================================================================
 @st.cache_data(ttl=25)
 def verileri_cek(tf_b, semboller=None):
     sfx = "" if tf_b == "D" else f"|{tf_b}"
 
-    # TradingView'in her periyotta kesin olarak desteklediği alanlar
     cols = [
         'name', 'description', 'volume', 'change', 'close', 'close[1]',
         f'close{sfx}', f'close[1]{sfx}', f'high{sfx}', f'low{sfx}',
-        f'ATR{sfx}',
-        f'EMA5{sfx}', f'EMA10{sfx}', f'EMA20{sfx}', f'EMA50{sfx}', f'EMA100{sfx}', f'EMA200{sfx}',
-        # Günlük teyit ortalamaları
-        'EMA5', 'EMA20', 'EMA50', 'EMA100', 'EMA200'
+        f'ATR{sfx}'
     ]
+    
+    for p in INTRADAY_EMAS:
+        cols.append(f'EMA{p}{sfx}')
+        
+    for p in DAILY_EMAS:
+        cols.append(f'EMA{p}')
 
     all_cols = list(dict.fromkeys(cols))
 
@@ -173,7 +179,7 @@ with st.spinner(f"CC Scanner piyasayı tarıyor ({f_get_tf_label(taramaPeriyot)}
     df, sfx_b = verileri_cek(taramaPeriyot, target_list)
 
 # ==============================================================================
-# 3. HESAPLAMA VE SİNYAL ÜRETİM MOTORU
+# 3. HESAPLAMA MOTORU
 # ==============================================================================
 if not df.empty:
     for col in df.columns:
@@ -192,92 +198,133 @@ if not df.empty:
     if isinstance(c, pd.DataFrame): 
         c = c.iloc[:, 0]
 
-    # Periyot Fiyat Değişimi
     prev_close_name = f'close[1]{sfx_b}'
     prev_close = df[prev_close_name] if prev_close_name in df.columns else df.get('close[1]', c)
     df['pChg'] = np.where(prev_close > 0, ((c - prev_close) / prev_close) * 100.0, df.get('change', 0.0)).round(2)
 
-    # ATR(14)
     atr_col = f'ATR{sfx_b}'
     df['atr'] = df[atr_col].where(df[atr_col] > 0, c * 0.02) if atr_col in df.columns else (c * 0.02)
 
     # Günlük EMA Referansları
-    e5_d = df.get('EMA5', c * 0.99)
-    e21_d = df.get('EMA21', c * 0.98)
-    e34_d = df.get('EMA34', c * 0.97)
-    e55_d = df.get('EMA55', c * 0.96)
-    e144_d = df.get('EMA144', c * 0.95)
-    e233_d = df.get('EMA233', c * 0.94)
-    e377_d = df.get('EMA377', c * 0.93)
+    def get_d_ema(p, mult):
+        col = f'EMA{p}'
+        if col in df.columns and df[col].notnull().any():
+            return df[col].fillna(c * mult)
+        return c * mult
 
-    # Günlük Trend Gücü Sayacı (5 EMA üzerinden)
-    df['daily_ema_above_count'] = (
-        (c > e5_d).astype(int) + (c > e20_d).astype(int) + 
-        (c > e50_d).astype(int) + (c > e100_d).astype(int) + (c > e200_d).astype(int)
+    e5_d = get_d_ema(5, 0.99)
+    e21_d = get_d_ema(21, 0.98)
+    e34_d = get_d_ema(34, 0.97)
+    e55_d = get_d_ema(55, 0.96)
+    e144_d = get_d_ema(144, 0.95)
+    e233_d = get_d_ema(233, 0.94)
+    e377_d = get_d_ema(377, 0.93)
+    e610_d = get_d_ema(610, 0.92)
+
+    # Günlük 8'li EMA Sıralaması
+    df['daily_strong_bull'] = (
+        (c > e5_d) & (e5_d > e21_d) & (e21_d > e34_d) & (e34_d > e55_d) &
+        (e55_d > e144_d) & (e144_d > e233_d) & (e233_d > e377_d) & (e377_d > e610_d)
     )
 
-    # Seçili Periyoda Göre Yön, Stop ve Sinyal Hesabı
-    def hesapla_periyot_sinyalleri(data):
-        price = data[c_close_name]
+    df['daily_ema_above_count'] = (
+        (c > e5_d).astype(int) + (c > e21_d).astype(int) + (c > e34_d).astype(int) + 
+        (c > e55_d).astype(int) + (c > e144_d).astype(int) + (c > e233_d).astype(int) + 
+        (c > e377_d).astype(int) + (c > e610_d).astype(int)
+    )
 
-        def get_col(col_base):
-            c_name = f'{col_base}{sfx_b}'
-            if c_name in data.columns:
-                return data[c_name].fillna(price)
-            return price
+    # Orijinal Periyot Fonksiyonu
+    def hesapla_yon_ve_stop(d_in):
+        fiyat = d_in[c_close_name]
 
-        e5 = get_col('EMA5')
-        e21 = get_col('EMA21')
-        e34 = get_col('EMA34')
-        e55 = get_col('EMA55')
-        e144 = get_col('EMA144')
-        e233 = get_col('EMA233')
-        e377 = get_col('EMA377')
-   
-        # Her periyodun kendi dinamik kurgusu
-        if taramaPeriyot in ["1", "5"]:
-            # Scalping: Fiyat ortalamaların üstünde ve kısa ortalama uzunu kesmişse
-            strong_al = (price > e5) & (e5 > e20) & (price > e50)
-            al = (price > e20) & (e5 > e20)
-            sat = (price < e20) & (e5 < e20)
-            stop_val = e20
-        elif taramaPeriyot in ["60", "240"]:
-            # Swing / Intraday: E5 > E20 > E50 trend kuralı
-            strong_al = (price > e5) & (e5 > e20) & (e20 > e50)
-            al = (price > e20) & (e20 > e50)
-            sat = (price < e20) & (e20 < e50)
-            stop_val = e50
-        else: # Günlük "D"
-            strong_al = (price > e5) & (e5 > e21) & (e21 > e34) & (e34 > e55) & (e55 > e144)  & (e144 > e233)
-            al = (price > e21) & (e21 > e34)
-            sat = (price < e21) & (e21 < e34)
-            stop_val = e20
+        def get_e(val):
+            col = f'EMA{val}{sfx_b}'
+            if col in d_in.columns and d_in[col].notnull().any():
+                res = d_in[col]
+                if isinstance(res, pd.DataFrame): 
+                    res = res.iloc[:, 0]
+                return res.fillna(fiyat * 0.98)
+            return fiyat * 0.98
 
-        sig = np.where(strong_al, 2, np.where(al, 1, np.where(sat, -1, 0)))
-        return pd.Series(sig, index=data.index), pd.Series(stop_val, index=data.index)
+        if taramaPeriyot == "240":
+            e15 = get_e(15)
+            e63 = get_e(63)
+            e3 = get_e(3)
+            dir_s = np.where(e15 > e63, 1, np.where(e15 < e63, -1, 0))
+            stop_s = e3
+            fast_m, slow_m = e15, e63
+        elif taramaPeriyot == "60":
+            e45 = get_e(45)
+            e189 = get_e(189)
+            e9 = get_e(9)
+            dir_s = np.where(e45 > e189, 1, np.where(e45 < e189, -1, 0))
+            stop_s = e9
+            fast_m, slow_m = e45, e189
+        elif taramaPeriyot == "1":
+            e500 = get_e(500)
+            dir_s = np.where(fiyat > e500, 1, np.where(fiyat < e500, -1, 0))
+            stop_s = e500
+            fast_m, slow_m = fiyat, e500
+        elif taramaPeriyot == "5":
+            e12 = get_e(12)
+            dir_s = np.where(fiyat > e12, 1, np.where(fiyat < e12, -1, 0))
+            stop_s = e12
+            fast_m, slow_m = fiyat, e12
+        elif taramaPeriyot == "D":
+            bull = d_in['daily_strong_bull']
+            bear = (
+                (fiyat < e5_d) & (e5_d < e21_d) & (e21_d < e34_d) & (e34_d < e55_d) &
+                (e55_d < e144_d) & (e144_d < e233_d) & (e233_d < e377_d) & (e377_d < e610_d)
+            )
+            dir_s = np.where(bull, 1, np.where(bear, -1, 0))
+            stop_s = e5_d
+            fast_m, slow_m = e5_d, e610_d
+        else:
+            e21 = get_d_ema(21, 0.98)
+            e55 = get_d_ema(55, 0.96)
+            dir_s = np.where(e21 > e55, 1, -1)
+            stop_s = e55
+            fast_m, slow_m = e21, e55
 
-    df['sig_code_num'], df['pStop'] = hesapla_periyot_sinyalleri(df)
+        return pd.Series(dir_s, index=d_in.index), pd.Series(stop_s, index=d_in.index), fast_m, slow_m
 
-    # Metin Karşılıkları
-    df['sig_code'] = np.where(df['sig_code_num'] == 2, "GÜÇLÜ AL",
-                     np.where(df['sig_code_num'] == 1, "AL",
-                     np.where(df['sig_code_num'] == -1, "SAT", "NÖTR")))
+    bDir, bStop, fast_line, slow_line = hesapla_yon_ve_stop(df)
+    df['sigType'] = bDir
+    df['pStop'] = bStop
 
-    df['sig_txt'] = np.where(df['sig_code'] == "GÜÇLÜ AL", "GÜÇLÜ AL 🔥",
-                    np.where(df['sig_code'] == "AL", "AL 🟢",
-                    np.where(df['sig_code'] == "SAT", "SAT 🔴", "NÖTR ⚪")))
+    # Dinamik Sinyal Ayırıcı (Kilitlenmeyi çözen kural)
+    def sinyal_belirle(r):
+        sig = r['sigType']
+        is_strong_d = r['daily_strong_bull']
+        fiyat_ref = r[c_close_name]
+        e5_ref = e5_d.loc[r.name]
 
-    # Gerçek Giriş ve ATR Hedefleri
+        if sig == 1:
+            if taramaPeriyot == "D":
+                return ("GÜÇLÜ AL 🔥", "GÜÇLÜ AL") if is_strong_d else ("AL", "AL")
+            else:
+                # İntraday al sinyali günlüğün EMA5'i üzerindeyse Güçlü AL üretir
+                return ("GÜÇLÜ AL 🔥", "GÜÇLÜ AL") if (fiyat_ref > e5_ref) else ("AL", "AL")
+        elif sig == -1:
+            return ("SAT", "SAT")
+        else:
+            return ("NÖTR", "NÖTR")
+
+    res_tuples = df.apply(sinyal_belirle, axis=1)
+    df['sig_txt'] = [t[0] for t in res_tuples]
+    df['sig_code'] = [t[1] for t in res_tuples]
+
+    # Giriş ve ATR Hedefleri
     df['entryP'] = c.round(2)
-    df['tp1'] = np.where(df['sig_code_num'] > 0, df['entryP'] + (atrMult1 * df['atr']), np.nan)
-    df['tp2'] = np.where(df['sig_code_num'] > 0, df['entryP'] + (atrMult2 * df['atr']), np.nan)
-    df['tp3'] = np.where(df['sig_code_num'] > 0, df['entryP'] + (atrMult3 * df['atr']), np.nan)
+    df['tp1'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult1 * df['atr']), np.nan)
+    df['tp2'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult2 * df['atr']), np.nan)
+    df['tp3'] = np.where(df['sigType'] == 1, df['entryP'] + (atrMult3 * df['atr']), np.nan)
 
     high_col = f'high{sfx_b}'
     high_ref = df[high_col].fillna(c) if high_col in df.columns else c
-    df['hit1'] = (df['sig_code_num'] > 0) & (high_ref >= df['tp1'])
-    df['hit2'] = (df['sig_code_num'] > 0) & (high_ref >= df['tp2'])
-    df['hit3'] = (df['sig_code_num'] > 0) & (high_ref >= df['tp3'])
+    df['hit1'] = (df['sigType'] == 1) & (high_ref >= df['tp1'])
+    df['hit2'] = (df['sigType'] == 1) & (high_ref >= df['tp2'])
+    df['hit3'] = (df['sigType'] == 1) & (high_ref >= df['tp3'])
 
     # ==============================================================================
     # 4. DASHBOARD SAYAÇLARI
@@ -324,7 +371,7 @@ if not df.empty:
                 check = " ✓" if hit else ""
                 return f"{tp_val:,.2f} (+{pct:.2f}%){check}"
 
-            daily_text = f"{daily_count}/5 🔥" if daily_count == 5 else f"{daily_count}/5 🟢" if daily_count >= 3 else f"{daily_count}/5 🔴"
+            daily_text = f"{daily_count}/8 🔥" if daily_count == 8 else f"{daily_count}/8 🟢" if daily_count >= 5 else f"{daily_count}/8 🔴"
 
             t_rows.append({
                 "Sembol": row['name'],
@@ -380,7 +427,7 @@ if not df.empty:
         )
 
     # ==============================================================================
-    # 6. TAKAS, TEFAS VE TEMEL ANALİZ PANELİ
+    # 6. TAKAS, TEFAS VE DETAY ANALİZ PANELİ
     # ==============================================================================
     st.divider()
     st.subheader("📊 Derinlemesine Takas, TEFAS Fon ve Trend Analiz Paneli")
@@ -391,10 +438,10 @@ if not df.empty:
     if secili_detay_hisse:
         detay_row = df[df['name'] == secili_detay_hisse].iloc[0]
         p_chg_val = detay_row['pChg']
-        sig_num = detay_row['sig_code_num']
+        sig_code_val = detay_row['sig_code']
         
         market_effect = p_chg_val * 2.5
-        signal_bonus = 25 if sig_num == 2 else (15 if sig_num == 1 else (-20 if sig_num == -1 else 0))
+        signal_bonus = 25 if sig_code_val == "GÜÇLÜ AL" else (15 if sig_code_val == "AL" else (-20 if sig_code_val == "SAT" else 0))
         
         takas_puani = int(np.clip(50 + market_effect + signal_bonus, 10, 95))
         fon_puani = int(np.clip(50 + (market_effect * 0.8) + (signal_bonus * 0.7), 10, 92))
@@ -441,7 +488,7 @@ if not df.empty:
             r1.metric("Kapanış Fiyatı", f"{detay_row[c_close_name]:,.2f} TL")
             r2.metric("ATR(14) Değeri", f"{detay_row['atr']:,.2f} TL")
             r3.metric("Korumalı Stop", f"{detay_row['pStop']:,.2f} TL")
-            st.caption(f"Günlük Bazda Durum: **{int(detay_row['daily_ema_above_count'])} / 5 Günlük EMA Üzerinde**")
+            st.caption(f"Günlük Bazda Durum: **{int(detay_row['daily_ema_above_count'])} / 8 Günlük EMA Üzerinde**")
 
         with sc2:
             st.markdown("##### 📌 Karar ve Strateji Özeti")
