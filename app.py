@@ -207,7 +207,8 @@ if not df.empty:
     e50_d = df.get('EMA34', c * 0.97)
     e100_d = df.get('EMA55', c * 0.96)
     e200_d = df.get('EMA144', c * 0.95)
-    e200_d = df.get('EMA233', c * 0.94)
+    e233_d = df.get('EMA233', c * 0.94)
+    e377_d = df.get('EMA377', c * 0.93)
 
     # Günlük Trend Gücü Sayacı (5 EMA üzerinden)
     df['daily_ema_above_count'] = (
