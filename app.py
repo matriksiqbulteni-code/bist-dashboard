@@ -1762,4 +1762,4 @@ else:
         "Piyasa verileri alınamadı. "
         "Lütfen sol panelden Terminali Güncelle butonuna basınız."
     )
-```
+
