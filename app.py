@@ -203,10 +203,10 @@ if not df.empty:
 
     # Günlük EMA Referansları
     e5_d = df.get('EMA5', c * 0.99)
-    e20_d = df.get('EMA21', c * 0.98)
-    e50_d = df.get('EMA34', c * 0.97)
-    e100_d = df.get('EMA55', c * 0.96)
-    e200_d = df.get('EMA144', c * 0.95)
+    e21_d = df.get('EMA21', c * 0.98)
+    e34_d = df.get('EMA34', c * 0.97)
+    e55_d = df.get('EMA55', c * 0.96)
+    e144_d = df.get('EMA144', c * 0.95)
     e233_d = df.get('EMA233', c * 0.94)
     e377_d = df.get('EMA377', c * 0.93)
 
@@ -227,11 +227,13 @@ if not df.empty:
             return price
 
         e5 = get_col('EMA5')
-        e10 = get_col('EMA10')
-        e20 = get_col('EMA20')
-        e50 = get_col('EMA50')
-        e200 = get_col('EMA200')
-
+        e21 = get_col('EMA21')
+        e34 = get_col('EMA34')
+        e55 = get_col('EMA55')
+        e144 = get_col('EMA144')
+        e233 = get_col('EMA233')
+        e377 = get_col('EMA377')
+   
         # Her periyodun kendi dinamik kurgusu
         if taramaPeriyot in ["1", "5"]:
             # Scalping: Fiyat ortalamaların üstünde ve kısa ortalama uzunu kesmişse
@@ -246,9 +248,9 @@ if not df.empty:
             sat = (price < e20) & (e20 < e50)
             stop_val = e50
         else: # Günlük "D"
-            strong_al = (price > e5) & (e5 > e20) & (e20 > e50) & (e50 > e200)
-            al = (price > e20) & (e20 > e50)
-            sat = (price < e20) & (e20 < e50)
+            strong_al = (price > e5) & (e5 > e21) & (e21 > e34) & (e34 > e55) & (e55 > e144)  & (e144 > e233)
+            al = (price > e21) & (e21 > e34)
+            sat = (price < e21) & (e21 < e34)
             stop_val = e20
 
         sig = np.where(strong_al, 2, np.where(al, 1, np.where(sat, -1, 0)))
